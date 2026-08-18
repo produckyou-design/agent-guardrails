@@ -40,6 +40,8 @@ Usage
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import re
 import subprocess
@@ -327,13 +329,7 @@ def check(base: str | None, head: str, cwd: Path = BASE_DIR) -> int:
     return 1
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Refuse commits that touch finished code.")
-    ap.add_argument("--base", default=None, help="base commit to compare against (default: <head>~1)")
-    ap.add_argument("--head", default="HEAD", help="commit to check (default: HEAD)")
-    ap.add_argument("--list", action="store_true", help="print the frozen list and exit")
-    args = ap.parse_args()
-
+def _run(args: argparse.Namespace) -> int:
     if args.list:
         for e in load_manifest():
             print(f"[{e['label']}] {e.get('frozen_at', '')}")
@@ -347,6 +343,31 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001 - a gate fails loudly, with the cause
         print(f"frozen: ERROR — {e!r}", file=sys.stderr)
         return 2
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Refuse commits that touch finished code.")
+    ap.add_argument("--base", default=None, help="base commit to compare against (default: <head>~1)")
+    ap.add_argument("--head", default="HEAD", help="commit to check (default: HEAD)")
+    ap.add_argument("--list", action="store_true", help="print the frozen list and exit")
+    ap.add_argument("--json", action="store_true", help="emit one machine-readable JSON result")
+    args = ap.parse_args()
+
+    if not args.json:
+        return _run(args)
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        code = _run(args)
+    print(json.dumps({
+        "gate": "frozen",
+        "status": "PASS" if code == 0 else "FAIL",
+        "exit_code": code,
+        "output": stdout.getvalue(),
+        "error": stderr.getvalue(),
+    }, ensure_ascii=False))
+    return code
 
 
 if __name__ == "__main__":

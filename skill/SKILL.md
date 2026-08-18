@@ -15,10 +15,17 @@ Read this before your first commit here.
 ```
 check_frozen.py       edits to paths marked finished
 check_git_policy.py   unmerged branches, stray worktrees
+check_scope.py        paths outside the declared task scope (when configured)
+check_guardrail_integrity.py  changes to the gates, hooks, or policy files
 ```
 
 Run them yourself before committing. A gate that stops you at commit time has
 already cost you the context you had ten minutes ago.
+
+`check_scope.py` is opt-in. If `.agent-guardrails/scope.json` exists, the
+pre-commit hook checks the staged diff against its allowed and forbidden paths.
+Use `--base <ref> --head <ref>` for a commit-range check. No scope file means
+the gate reports `INACTIVE`; that is not a hidden PASS for an active scope.
 
 ## Staging
 
@@ -69,6 +76,20 @@ Do not weaken a freeze entry to get past the gate. Do not delete a path from
 `frozen.json` as part of a change to that path. Either of those turns the
 safeguard back into a note.
 
+## Guardrail files
+
+`guardrail_policy.json` lists the files that make these checks trustworthy. A
+change to one of them must be accompanied in the same commit message by:
+
+```
+GUARDRAIL-CHANGE: why the guardrail must change now
+GUARDRAIL-IMPACT: what protection is lost if this is wrong
+GUARDRAIL-VERIFY: how the new guardrail was tested
+```
+
+The `commit-msg` hook checks these lines. The CI workflow checks each commit in
+the range, so a later marker cannot backdate permission for an earlier commit.
+
 ## What counts as verification
 
 Running a check counts. Reading code and concluding it should work does not.
@@ -110,6 +131,18 @@ because it is reading the last file something wrote before it stopped running.
 Pushing puts a commit on the remote. It may not put anything in front of users.
 Find out how this project deploys, and confirm from the live response, with a
 cache-busting query, before you write that something is live.
+
+## Diagnose the installation
+
+Run the read-only diagnostic after installation:
+
+```
+python scripts/doctor.py
+python scripts/doctor.py --json
+```
+
+It checks the gate files, policy files, hooks, and guardrail-integrity CI. An
+absent task scope is reported as `INFO` because scope is deliberately opt-in.
 
 ## The commit message is the report
 

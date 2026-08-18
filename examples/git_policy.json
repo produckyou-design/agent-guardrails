@@ -8,6 +8,15 @@
     "merged from it, so the next person does not merge the whole thing."
   ],
   "main_ref": "origin/main",
+  "main_refs": ["origin/main", "main", "origin/master", "master", "origin/trunk", "trunk"],
+  "_main_refs": "Refs are tried in order. Set this to the default branch names used by the repository.",
+  "code_extensions": [
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".css", ".scss", ".html", ".vue", ".svelte",
+    ".go", ".rs", ".java", ".kt", ".rb", ".php", ".cs", ".cpp", ".h",
+    ".sql", ".yml", ".yaml"
+  ],
+  "_code_extensions": "A branch is code-bearing when its diff contains one of these suffixes.",
   "exempt_branches": [
     {
       "name": "spike/new-parser",

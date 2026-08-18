@@ -20,7 +20,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import io
 import json
 import subprocess
 import sys
@@ -35,7 +37,8 @@ if hasattr(sys.stdout, "reconfigure"):
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 CONFIG = BASE_DIR / "git_policy.json"
-MAIN_REFS = ("origin/main", "main")
+DEFAULT_MAIN_REFS = ("origin/main", "main")
+DEFAULT_CODE_EXTENSIONS = (".py", ".js", ".css", ".html", ".yml", ".yaml")
 
 
 def _git(args: list[str], cwd: Path = BASE_DIR) -> str:
@@ -61,9 +64,15 @@ def load_config() -> dict:
         raise RuntimeError(f"{CONFIG.name} failed to parse: {e}")
 
 
-def resolve_main() -> str | None:
+def resolve_main(config: dict) -> str | None:
     """Prefer origin/main, fall back to main. None means we cannot judge."""
-    for ref in MAIN_REFS:
+    refs_value = config.get("main_refs")
+    if not refs_value and config.get("main_ref"):
+        refs_value = [config["main_ref"]]
+    if isinstance(refs_value, str):
+        refs_value = [refs_value]
+    refs = tuple(refs_value or DEFAULT_MAIN_REFS)
+    for ref in refs:
         if _git_ok(["rev-parse", "--verify", f"{ref}^{{commit}}"]):
             return ref
     return None
@@ -107,8 +116,14 @@ def unmerged_branches(main_ref: str, config: dict) -> list[dict]:
 
         # Docs-only differences cannot break production.
         changed = _git(["diff", "--name-only", f"{main_ref}...{ref}"]).splitlines()
-        code = [p for p in changed
-                if p.endswith((".py", ".js", ".css", ".html", ".yml", ".yaml"))]
+        extensions_value = config.get("code_extensions")
+        if isinstance(extensions_value, str):
+            extensions_value = [extensions_value]
+        extensions = tuple(
+            extension if extension.startswith(".") else f".{extension}"
+            for extension in (extensions_value or DEFAULT_CODE_EXTENSIONS)
+        )
+        code = [p for p in changed if p.endswith(extensions)]
         if not code:
             continue
 
@@ -159,7 +174,7 @@ def stray_worktrees(config: dict) -> list[str]:
 
 def check() -> int:
     config = load_config()
-    main_ref = resolve_main()
+    main_ref = resolve_main(config)
     if main_ref is None:
         # No basis to judge means no pass. Fail closed.
         print("git-policy: FAIL - cannot find main or origin/main, cannot judge")
@@ -205,18 +220,41 @@ def check() -> int:
     return 1
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--list", action="store_true", help="print config and exit")
-    args = ap.parse_args()
-
+def _run(args: argparse.Namespace) -> int:
     if args.list:
         config = load_config()
         print(json.dumps({k: v for k, v in config.items()
                           if not k.startswith("_")}, ensure_ascii=False, indent=2))
         return 0
     return check()
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--list", action="store_true", help="print config and exit")
+    ap.add_argument("--json", action="store_true", help="emit one machine-readable JSON result")
+    args = ap.parse_args()
+
+    if not args.json:
+        return _run(args)
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        try:
+            code = _run(args)
+        except Exception as exc:  # noqa: BLE001 - JSON mode must retain the cause
+            code = 2
+            print(f"git-policy: ERROR - {exc!r}", file=sys.stderr)
+    print(json.dumps({
+        "gate": "git-policy",
+        "status": "PASS" if code == 0 else "FAIL",
+        "exit_code": code,
+        "output": stdout.getvalue(),
+        "error": stderr.getvalue(),
+    }, ensure_ascii=False))
+    return code
 
 
 if __name__ == "__main__":
