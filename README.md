@@ -1,7 +1,8 @@
 # agent-guardrails
 
-A tool that refuses a commit when your AI coding agent edits code that was
-already finished. It is two Python files with no dependencies to install.
+A small set of no-dependency Python gates for repositories where AI agents
+work on code that is already in production. It protects finished paths,
+declared task scope, and the guardrails themselves.
 
 [한국어](docs/i18n/README.ko.md) | [Español](docs/i18n/README.es.md) | [Português](docs/i18n/README.pt-BR.md) | [中文](docs/i18n/README.zh-CN.md) | [日本語](docs/i18n/README.ja.md) | [Français](docs/i18n/README.fr.md) | [Deutsch](docs/i18n/README.de.md) | [Русский](docs/i18n/README.ru.md)
 
@@ -111,6 +112,54 @@ that code yet.** And you find that out now instead of finding it out in
 production. The point is not to make you fill in a form. It is that the judgment
 comes out of writing the three lines.
 
+## Keep one task inside its declared scope
+
+Frozen paths answer "what must not be touched because it is finished." A scope
+file answers "what may be touched for this task." The scope gate is optional so
+existing repositories can adopt it without blocking ordinary commits.
+
+Copy the example for a contained task:
+
+```sh
+mkdir -p .agent-guardrails
+cp examples/scope.json .agent-guardrails/scope.json
+```
+
+Edit `allowed_paths` and `forbidden_paths`, then run the gate before asking for
+review:
+
+```sh
+python scripts/check_scope.py
+python scripts/check_scope.py --json
+```
+
+The pre-commit hook checks the staged diff. CI or a release review can check a
+commit range instead:
+
+```sh
+python scripts/check_scope.py --base origin/main --head HEAD --json
+```
+
+The scope file is task-specific. Keep it local or remove it after the task;
+`ignored_paths` can exclude the scope file itself.
+
+## Protect the guardrails
+
+An agent must not be able to weaken a gate by quietly changing the gate,
+policy, hook, or installer that runs it. `guardrail_policy.json` lists those
+protected paths. A change to one of them must carry all three lines in the same
+commit message:
+
+```text
+GUARDRAIL-CHANGE: why the guardrail must change now
+GUARDRAIL-IMPACT: what protection is lost if this is wrong
+GUARDRAIL-VERIFY: how the new guardrail was tested
+```
+
+The `commit-msg` hook enforces this locally. The workflow example enforces the
+same rule in CI and checks each commit separately, so a later declaration cannot
+legalize an earlier unmarked change.
+
 ## What gets better
 
 **You stop reading every commit.** Say your agent made 34 commits overnight. Two
@@ -133,7 +182,7 @@ layout" is advice. A commit that will not go through is information. The second
 one works at 3am, with a model that has never seen you, in its first minute in
 your repository.
 
-## The second tool
+## Keep branch and worktree state visible
 
 `check_git_policy.py` finds unmerged branches and worktrees that were left
 checked out.
@@ -147,6 +196,20 @@ tell branches whose content genuinely is not on main apart from branches that
 were already merged through a squash or a rebase. In the project this came from,
 that distinction turned "11 unmerged branches" into "1 that actually matters."
 
+`git_policy.json` can adapt the gate to another repository:
+
+```json
+{
+  "main_refs": ["origin/main", "main", "origin/trunk", "trunk"],
+  "code_extensions": [".py", ".ts", ".go", ".rs"],
+  "unmerged_branch_grace_days": 3,
+  "managed_worktree_prefixes": []
+}
+```
+
+`main_ref` remains supported for older configurations. The branch gate fails
+closed when it cannot find any configured main ref.
+
 ## Where this came from
 
 It came out of a real project where AI agents wrote production code for months.
@@ -154,8 +217,8 @@ Along the way the live site broke 60 times. Each time, what happened and what to
 do differently got written down, and the rules that could be turned into code
 became these gates.
 
-This repository ships the two that apply outside that project, along with the 28
-incidents behind them. Those are in `FAILURE_MODES.md`.
+This repository ships the portable guardrails that apply outside that project,
+along with the 29 incidents behind them. Those are in `FAILURE_MODES.md`.
 
 ## Install
 
@@ -171,8 +234,20 @@ Windows:
 ```
 
 To do it by hand, copy `gates/*.py` into your project's `scripts/`, put
-`hooks/pre-commit` in `.git/hooks/`, and copy `examples/workflow.yml` into
-`.github/workflows/`.
+`hooks/pre-commit` and `hooks/commit-msg` in `.git/hooks/`, copy
+`examples/guardrail_policy.json` to the repository root, and copy
+`examples/workflow.yml` into `.github/workflows/`.
+
+After installation, run the read-only diagnostic:
+
+```sh
+python scripts/doctor.py
+python scripts/doctor.py --json
+```
+
+It checks the installed gates, configuration files, hooks, and whether CI
+contains the guardrail-integrity check. An absent task scope is reported as
+`INFO`, because scope is intentionally opt-in.
 
 A local hook can be skipped with `--no-verify`, but the CI job cannot. It is
 worth having both.
@@ -205,11 +280,11 @@ worst at catching: a small, plausible edit to code that was already correct.
 ## Tests
 
 ```sh
-python tests/test_gates.py
+python -m unittest discover tests -v
 ```
 
-There are 16. They create a real git repository in a temporary directory, make
-real commits, and run the gates as separate processes. Nothing is mocked,
+The tests create real git repositories in temporary directories, make real
+commits, and run the gates as separate processes. Nothing is mocked,
 because what is being tested is how the gates read git.
 
 Bugs that were learned the expensive way are in there too. For example,

@@ -1,0 +1,9 @@
+#!/bin/sh
+# agent-guardrails commit-msg hook
+#
+# Guardrail code and policy changes need explicit impact and verification.
+
+set -e
+PY=${PYTHON:-python}
+
+$PY scripts/check_guardrail_integrity.py --message-file "$1"

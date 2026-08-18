@@ -337,3 +337,17 @@ runs the gates on this repository from their real location, and runs the tests.
 **Rule** A file that is both an example and a live config will drift, and the
 example is the half that rots, because nothing executes it. Keep the copy people
 take separate from the copy you run, and run yours.
+
+## 29. The installed diagnostic inspected the caller's directory
+
+**Symptom** `doctor.py` was run from outside the target repository and reported
+missing configs and hooks even though installation had succeeded.
+
+**Cause** The diagnostic defaulted to `Path.cwd()` instead of the repository
+that contained the installed script.
+
+**Fix** The default repository is now derived from the script location, with
+`--repo` still available for an explicit target.
+
+**Rule** An installed diagnostic must derive its default target from its own
+location, not from the shell directory that happened to invoke it.

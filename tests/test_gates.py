@@ -213,6 +213,14 @@ class TestFrozen(GateTestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("src/billing/charge.py", r.stdout)
 
+    def test_json_mode(self):
+        self.commit("src/other.py", "x = 2\n", "json smoke")
+        r = run_gate(self.repo, "check_frozen.py", "--json")
+        payload = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(payload["gate"], "frozen")
+        self.assertEqual(payload["status"], "PASS")
+
 
 class TestGitPolicy(GateTestCase):
     def test_clean_repo_passes(self):
@@ -232,6 +240,13 @@ class TestGitPolicy(GateTestCase):
     def test_list_mode(self):
         r = run_gate(self.repo, "check_git_policy.py", "--list")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_json_mode(self):
+        r = run_gate(self.repo, "check_git_policy.py", "--json")
+        payload = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(payload["gate"], "git-policy")
+        self.assertEqual(payload["status"], "PASS")
 
 
 class TestOutputIsEnglish(unittest.TestCase):

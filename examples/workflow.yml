@@ -28,3 +28,6 @@ jobs:
 
       - name: git policy
         run: python scripts/check_git_policy.py
+
+      - name: guardrail integrity
+        run: python scripts/check_guardrail_integrity.py --base origin/main --head HEAD

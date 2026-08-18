@@ -1,0 +1,15 @@
+{
+  "_doc": "Copy this to .agent-guardrails/scope.json for one contained task. Keep it local or remove it after the task.",
+  "version": 1,
+  "reason": "Fix the example parser and its regression test.",
+  "allowed_paths": [
+    "src/example.py",
+    "tests/test_example.py"
+  ],
+  "forbidden_paths": [
+    "src/billing/**"
+  ],
+  "ignored_paths": [
+    ".agent-guardrails/scope.json"
+  ]
+}

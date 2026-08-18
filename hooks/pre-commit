@@ -11,3 +11,4 @@ PY=${PYTHON:-python}
 
 $PY scripts/check_frozen.py
 $PY scripts/check_git_policy.py
+$PY scripts/check_scope.py

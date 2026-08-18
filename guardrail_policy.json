@@ -1,0 +1,25 @@
+{
+  "_doc": "Paths that make the guardrails trustworthy require explicit evidence when changed.",
+  "version": 1,
+  "protected_paths": [
+    "frozen.json",
+    "git_policy.json",
+    "guardrail_policy.json",
+    "gates/**",
+    "scripts/check_frozen.py",
+    "scripts/check_git_policy.py",
+    "scripts/check_scope.py",
+    "scripts/check_guardrail_integrity.py",
+    "hooks/**",
+    "install.sh",
+    "install.ps1",
+    "examples/guardrail_policy.json",
+    "examples/workflow.yml",
+    ".github/workflows/**"
+  ],
+  "_markers": [
+    "GUARDRAIL-CHANGE: why the guardrail must change now",
+    "GUARDRAIL-IMPACT: what protection is lost if this is wrong",
+    "GUARDRAIL-VERIFY: how the new guardrail was tested"
+  ]
+}
