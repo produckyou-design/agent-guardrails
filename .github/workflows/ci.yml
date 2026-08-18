@@ -1,0 +1,33 @@
+name: ci
+
+# This repository runs its own gates on itself, from gates/ rather than
+# scripts/. The file users copy is examples/workflow.yml.
+#
+# Keeping the two separate is deliberate. When the shipped template and this
+# repository shared one file, one of them was always wrong, and the wrong one
+# was the template nobody here runs.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: tests
+        run: python tests/test_gates.py
+
+      - name: gates on ourselves
+        run: |
+          python gates/check_frozen.py --base origin/main --head HEAD
+          python gates/check_git_policy.py

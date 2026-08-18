@@ -320,3 +320,20 @@ was needed.
 
 **Rule** Backups live inside the project, and you verify the backup exists and
 parses before you start the operation it protects.
+
+## 28. The shipped template and our own config were the same file
+
+**Symptom** The first CI run on this repository failed. The gate could not find
+`scripts/check_frozen.py`.
+
+**Cause** One workflow file served two purposes: the template users copy, which
+expects the gates in `scripts/`, and this repository's own CI, where they live
+in `gates/`. Both could not be right, and the one that was wrong was the one
+nobody here ever ran.
+
+**Fix** Split them. `examples/workflow.yml` is the template. `.github/workflows/ci.yml`
+runs the gates on this repository from their real location, and runs the tests.
+
+**Rule** A file that is both an example and a live config will drift, and the
+example is the half that rots, because nothing executes it. Keep the copy people
+take separate from the copy you run, and run yours.

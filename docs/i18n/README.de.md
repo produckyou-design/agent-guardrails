@@ -1,72 +1,64 @@
 # agent-guardrails
 
-Regeln, die dein KI-Coding-Agent nicht überspringen kann, weil sie Code sind und
-keine Dokumentation.
+Ein Werkzeug, das einen Commit ablehnt, wenn dein KI-Coding-Agent Code
+verändert, der bereits fertig war. Es besteht aus zwei Python-Dateien, ohne
+Abhängigkeiten zum Installieren.
 
 [English](../../README.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Português](README.pt-BR.md) | [中文](README.zh-CN.md) | [日本語](README.ja.md) | [Français](README.fr.md) | [Русский](README.ru.md)
 
 ---
 
-## Was dir niemand über KI-Coding-Agenten sagt
+## Welches Problem das löst
 
-Sie zerlegen die Produktion normalerweise nicht dadurch, dass sie schlechten
-Code schreiben.
+Wenn du Code an einen KI-Agenten gibst, kommt der Ärger meist nicht von dem
+neuen Code, den er schreibt. Er kommt von dem Code, den er unterwegs anfasst.
 
-Sie zerlegen sie, indem sie etwas anfassen, das bereits fertig war, und zwar auf
-eine Weise, die im Review völlig normal aussieht und die kein Test abdeckt, weil
-der Code lief und niemand auf die Idee kam, einen zu schreiben.
+Sagen wir, du bittest ihn, die Abstände auf der Rechnungsseite zu korrigieren.
+Häufig räumt er bei der Gelegenheit auch die Steuerberechnung direkt daneben
+auf. Das ist keine Nachlässigkeit. Der Agent hat keine Möglichkeit zu wissen,
+warum dieser Code so aussieht, wie er aussieht, oder was nötig war, um dorthin zu
+kommen. Und so eine Änderung sieht im Review nicht falsch aus. Ein Test deckt sie
+auch nicht ab, denn der Code lief, und niemand kam auf die Idee, einen zu
+schreiben.
 
-So sieht das in der Praxis aus. Alles davon ging live.
+Du kannst "diese Datei nicht anfassen" in die Projektdokumentation schreiben. Das
+hält nicht. In dem Projekt, aus dem das hier stammt, stand diese Regel sechs
+Monate in der Doku und wurde permanent gebrochen, auch von Agenten, die den Satz
+gerade gelesen hatten, weil kein Code sie jemals geprüft hat.
 
-**Das Deployment war erfolgreich. Der Bildschirm hat sich nicht geändert.**
-CSS wurde geändert, neues HTML ging raus. Browser benutzten weiter das alte CSS
-aus dem Cache. Pipeline grün, Logs sauber, Seite falsch. Das ist die schlimmste
-Sorte Fehler, weil das Erfolgssignal trotzdem feuert.
+Dieses Werkzeug macht aus dieser Regel **etwas, das tatsächlich ausgeführt wird**.
 
-**Der Push war erfolgreich. Das Deployment lief nie.**
-Der Commit existiert. Er ist auf GitHub. Der Deploy-Workflow war manuell, also
-passierte nichts. Zwei Tage lang wurden "gepusht" und "live" als dasselbe
-gezählt.
+## Wie es funktioniert
 
-**Ein Feature lief live, und sein Code lag auf keinem Branch.**
-Der Consumer war deployed, der Producer nicht. Der Bildschirm las weiter eine
-Datei, die niemand mehr schrieb, und lieferte die letzte gute Kopie aus, bis sie
-ablief.
+Du listest die fertigen Pfade in `frozen.json` auf.
 
-**Die Sicherheitsregel stand seit sechs Monaten in der Doku.**
-"Mobile Layout nicht anfassen." Aufgeschrieben, abgestimmt, in der Regeldatei,
-die jeder Agent liest. Nichts hat sie durchgesetzt. Sie wurde permanent
-verletzt, von jedem Agenten, auch von denen, die den Satz gerade gelesen hatten.
-
-Der letzte Punkt ist der ganze Grund, warum es dieses Repository gibt.
-
-> Eine Regel, die nichts liest, ist keine Schutzmaßnahme. Sie ist eine Notiz, die
-> so aussieht.
-
-## Was das hier ist
-
-Zwei Python-Dateien. Nur Standardbibliothek. Kein Modell, keine API, kein Dienst,
-keine Abhängigkeiten zum Installieren.
-
-```
-check_frozen.py       353 Zeilen   sperrt fertigen Code
-check_git_policy.py   223 Zeilen   findet vergrabene Arbeit
+```json
+{
+  "frozen": [
+    {
+      "label": "Abrechnung",
+      "paths": ["src/billing/charge.py"],
+      "reason": "Fertig und in Produktion. Auf keiner Roadmap.",
+      "what_breaks": "Eine falsche Rechnung zeigt trotzdem einen normalen Screen. Nur der Betrag ändert sich.",
+      "before_you_touch": [
+        "Teilrückerstattungen werden in refund.py behandelt, nicht hier.",
+        "Ein Fehler rollt die gesamte Transaktion zurück. Das nicht abschwächen."
+      ],
+      "how_to_verify": "pytest tests/test_billing.py -q"
+    }
+  ]
+}
 ```
 
-Sie stammen aus einem echten Projekt, in dem KI-Agenten monatelang
-Produktionscode ausgeliefert und ihn 60 Mal kaputtgemacht haben. Jeder Bruch
-wurde aufgeschrieben, und was zu Code werden konnte, wurde zu diesen Gates.
-Dieses Repository liefert die beiden, die sich verallgemeinern lassen, plus die
-27 Vorfälle dahinter.
+Danach installierst du den Pre-commit-Hook, und jeder Commit, der diese Pfade
+verändert, wird abgelehnt. In diesem Moment wird alles, was du oben geschrieben
+hast, im Terminal ausgegeben: warum es gesperrt ist, was kaputtgeht, wenn du dich
+irrst, und was du wissen musst, bevor du es anfasst. Es erscheint **genau dann,
+wenn jemand blockiert wird**, und nicht in einer Datei, die niemand öffnet.
 
-## Der Teil, den es sich zu klauen lohnt, selbst wenn du sonst nichts nimmst
+### Wenn du es wirklich ändern musst
 
-Code einzufrieren ist einfach. Die schwierige Frage ist, wie jemand ihn wieder
-auftaut, denn die Antwort "frag einen Menschen" überlebt den Kontakt mit einem
-Agenten, der um 3 Uhr nachts arbeitet, nicht.
-
-Das hier funktioniert. Um einen eingefrorenen Pfad anzufassen, muss die
-Commit-Nachricht drei Zeilen tragen:
+Schreib drei Zeilen in die Commit-Nachricht.
 
 ```
 UNFREEZE: src/billing/charge.py - die neue Zahlart braucht hier einen Zweig
@@ -74,68 +66,66 @@ UNFREEZE-IMPACT: falsche Rechnung zeigt trotzdem einen normalen Screen, nur der 
 UNFREEZE-ROLLBACK: git revert <sha>, danach pytest tests/test_billing.py erneut laufen lassen
 ```
 
-Fehlt eine, wird der Commit abgelehnt.
+Fehlt eine der drei, wird der Commit abgelehnt.
 
-Warum drei und nicht eine? Weil der Grund nur "warum jetzt" beantwortet. Er
-beantwortet nicht, was passiert, wenn du dich irrst, und auch nicht, wie jemand
-zurückkommt. Das sind die beiden Fragen, die um 3 Uhr nachts zählen, und genau
-die beiden werden übersprungen.
+Warum drei Zeilen statt einer? Weil der Grund nur beantwortet, "warum das jetzt
+geändert wird". Er sagt nicht, was passiert, wenn du dich irrst, und auch nicht,
+wie jemand dahin zurückkommt, wo er war. Genau diese beiden Dinge zählen
+tatsächlich, und genau diese beiden werden weggelassen.
 
-Der Punkt ist nicht die Bürokratie. **Wenn du Auswirkung und Rollback nicht
-schreiben kannst, bist du noch nicht so weit, das aufzutauen, und du hast es
-gerade selbst herausgefunden statt in der Produktion.** Dieses Urteil fällt von
-allein aus den drei Zeilen, und deshalb wirkt es bei Agenten genauso wie bei
-Menschen.
+**Wenn du Auswirkung und Rollback nicht schreiben kannst, bist du noch nicht so
+weit, diesen Code zu ändern.** Und du erfährst das jetzt, statt es in der
+Produktion zu erfahren. Es geht nicht darum, ein Formular auszufüllen, sondern
+darum, dass dieses Urteil beim Schreiben der drei Zeilen von selbst entsteht.
 
-## Was tatsächlich besser wird
+## Was besser wird
 
-**Du hörst auf, alles zu reviewen.**
-Dein Agent hat über Nacht 34 Commits gemacht. Zwei davon tragen UNFREEZE-Zeilen.
-Die beiden liest du zuerst. Das Gate hat den Agenten nicht vorsichtig gemacht.
-Es hat den Agenten dazu gebracht, dir zu sagen, wo er vom Weg abgekommen ist.
+**Du liest nicht mehr jeden Commit.** Angenommen, dein Agent hat über Nacht 34
+Commits gemacht. Zwei davon tragen UNFREEZE-Zeilen. Die liest du zuerst. Der
+Agent ist nicht vorsichtiger geworden; er markiert jetzt, wo er den Rahmen
+verlassen hat, den du ihm gegeben hast.
 
-**"Korrigier den Abstand" kommt nicht mehr mit 12 geänderten Dateien zurück.**
-Du hast um eine Sache gebeten. Der Diff enthält diese Sache, dazu ein Refactor
-der Steuerberechnung und ein Aufräumen einer Retry-Schleife, die es nur gibt,
-weil eine fremde API wackelt. Der Agent ist nicht schludrig. Er kann nicht
-unterscheiden, welcher seltsame Code aus einem Grund seltsam ist. Jetzt sagt der
-seltsame Code das selbst, in dem Moment, in dem er angefasst wird.
+**"Korrigier die Abstände" kommt nicht mehr als zwölf geänderte Dateien
+zurück.** Du hast um eine Sache gebeten, und im Diff steckt zusätzlich ein
+Refactor der Steuerberechnung und ein Aufräumen einer Retry-Schleife, die es nur
+gibt, weil eine fremde API unzuverlässig ist. Das passiert seltener.
 
-**Der tragende Workaround wird nicht mehr verbessert.**
-Jede Codebasis hat eine Zeile, die falsch aussieht und etwas trägt. Ungefähr
-einmal im Quartal räumt sie jemand auf, und dann bricht etwas auf eine Art, die
-niemand mit dem Aufräumen verbindet. `before_you_touch` ist das Schild an genau
-diesem Zaun, und es erscheint im Terminal, nicht in einer Datei, die niemand
-öffnet.
+**Der tragende Workaround wird nicht mehr aufgeräumt.** Jede Codebasis hat eine
+Zeile, die falsch aussieht, aber etwas zusammenhält. Alle paar Monate räumt sie
+jemand auf, und später geht etwas kaputt, das niemand mit diesem Aufräumen in
+Verbindung bringt. `before_you_touch` ist der Warnhinweis, der an dieser Stelle
+hängt.
 
-**Du kannst schlafen gehen.**
-Nicht weil der Agent vorsichtig geworden ist. Weil das Schlimmste, das er in
-deiner Abwesenheit anrichten kann, jetzt durch eine Liste begrenzt ist, die du
-im Wachzustand geschrieben hast.
+**Die Regel hängt nicht mehr davon ab, dass sich jemand erinnert.** "Fass das
+Mobile-Layout nicht an" ist ein Ratschlag. Ein Commit, der nicht durchgeht, ist
+eine Information. Das Zweite wirkt um 3 Uhr nachts, bei einem Modell, das dich
+nie gesehen hat, in seiner ersten Minute in deinem Repository.
 
-**Die Regel hängt nicht mehr daran, dass sich jemand erinnert.**
-"Fass das Mobile-Layout nicht an" ist ein Ratschlag. Ein Commit, der nicht
-durchgeht, ist eine Information. Der Unterschied ist nicht Höflichkeit. Eines
-von beiden wirkt um 3 Uhr nachts, bei einem Modell, das dich nie gesehen hat, in
-seiner ersten Minute in deinem Repository.
+## Das zweite Werkzeug
 
-## Was das hier nicht tut
+`check_git_policy.py` findet nicht gemergte Branches und Worktrees, die
+ausgecheckt liegen geblieben sind.
 
-Es misst nicht, wie viel besser irgendetwas wird. In diesem README gibt es keine
-Benchmark-Tabelle, weil es keinen ehrlichen Weg gibt, eine zu bauen, und eine
-erfundene Tabelle wäre weniger wert als die zwei Skripte.
+Ein herumliegender Branch ist nicht das eigentliche Problem. Das Problem ist,
+dass **echte, nicht gemergte Arbeit darin vergraben wird**. Agenten legen
+Branches und Worktrees an und gehen zur nächsten Aufgabe über, also sammelt sich
+das an.
 
-Es sucht weder nach Secrets noch nach unsicheren Mustern. gitleaks und semgrep
-können das besser als alles, was hier mitgeliefert würde. Dieses Repo macht das,
-was die beiden nicht machen.
+Es listet nicht einfach Branches auf. Es nutzt Patch-Äquivalenz (`git cherry`),
+um Branches, deren Inhalt wirklich nicht auf main ist, von solchen zu trennen,
+die bereits per Squash oder Rebase übernommen wurden. Im Ursprungsprojekt machte
+diese Unterscheidung aus "11 nicht gemergten Branches" genau "1, der wirklich
+zählt".
 
-Es bringt einen Agenten nicht dazu, besseren Code zu schreiben. Es macht eine
-falsche Änderung sichtbar, bevor sie rausgeht. Das sind verschiedene Probleme,
-und hier geht es nur um das zweite.
+## Woher das kommt
 
-Es ersetzt kein Review. Es entfernt die Fehlerklasse, die Review am schlechtesten
-findet: die kleine, plausible, benachbarte Änderung an etwas, das schon richtig
-war.
+Es stammt aus einem echten Projekt, in dem KI-Agenten monatelang Produktionscode
+geschrieben haben. Dabei ging die Live-Seite 60 Mal kaputt. Jedes Mal wurde
+festgehalten, was passiert war und was man anders machen sollte, und die Regeln,
+die sich in Code verwandeln ließen, wurden zu diesen Gates.
+
+Dieses Repository liefert die beiden, die auch außerhalb jenes Projekts gelten,
+zusammen mit den 28 Vorfällen dahinter. Die stehen in `FAILURE_MODES.md`.
 
 ## Installation
 
@@ -147,47 +137,42 @@ git clone https://github.com/produckyou-design/agent-guardrails
 Windows:
 
 ```powershell
-.\agent-guardrails\install.ps1 C:\path\to\your-repo
+.\agent-guardrails\install.ps1 C:\pfad\zu\deinem-repo
 ```
 
-Oder kopiere `gates/*.py` in dein `scripts/`, leg den Pre-commit-Hook ab und füge
-`.github/workflows/gates.yml` hinzu. Lokale Hooks lassen sich mit `--no-verify`
-umgehen, der CI-Job nicht, also nutze beide.
+Von Hand: kopiere `gates/*.py` in das `scripts/` deines Projekts, lege
+`hooks/pre-commit` in `.git/hooks/` ab und kopiere `examples/workflow.yml` nach
+`.github/workflows/`.
 
-Fang mit einer leeren Freeze-Liste an. Füge den ersten Pfad an dem Tag hinzu, an
-dem ein Agent etwas ändert, das du für fertig gehalten hast. Du wirst nicht lange
-warten müssen.
+Ein lokaler Hook lässt sich mit `--no-verify` überspringen, der CI-Job nicht.
+Beides zu haben lohnt sich.
 
-## Einen Freeze-Eintrag schreiben, der hält
-
-Ein Pfad ohne Begründung wird von dem aufgetaut, der ihn als Nächstes braucht.
-Was einen Freeze hält, ist `what_breaks`, denn wer auftaut, muss wissen, was er
-riskiert.
-
-```json
-{
-  "label": "Abrechnung",
-  "paths": ["src/billing/charge.py"],
-  "reason": "Fertig und in Produktion. Auf keiner Roadmap.",
-  "what_breaks": "Eine falsche Rechnung zeigt trotzdem einen normalen Screen. Nur der Betrag ändert sich.",
-  "before_you_touch": [
-    "Teilrückerstattungen liegen in refund.py, nicht hier.",
-    "Ein Fehler rollt die gesamte Transaktion zurück. Das nicht abschwächen."
-  ],
-  "how_to_verify": "pytest tests/test_billing.py -q"
-}
-```
-
-`before_you_touch` ist der Ort, an dem die Ausfälle landen. Jede Zeile darin
-sollte etwas sein, das teuer gelernt wurde.
+**Fang mit einer leeren Freeze-Liste an.** Nimm den ersten Pfad an dem Tag auf,
+an dem ein Agent eine Datei ändert, die du für fertig gehalten hast.
 
 ## Friere nicht alles ein
 
-Wenn der Freeze das ganze Repository abdeckt, wird das Gate zum Jungen, der
-"Wolf" rief, und echte Verstöße werden zusammen mit dem Rauschen ignoriert. Lass
-die Pfade, die deine Roadmap als Nächstes anfasst, weit offen.
+Wenn der Freeze das ganze Repository abdeckt, schlägt das Gate ständig an, und
+dann werden echte Verstöße zusammen mit dem Rauschen ignoriert. Lass die Pfade
+offen, an denen du gleich arbeiten wirst.
 
-Das Ursprungsprojekt friert 19 Pfade von mehreren Hundert ein.
+Das Ursprungsprojekt hält 19 von mehreren Hundert Pfaden eingefroren.
+
+## Was dieses Werkzeug nicht tut
+
+**Es misst nicht, wie viel besser irgendetwas wird.** In diesem README gibt es
+keine Benchmark-Tabelle, weil es keinen ehrlichen Weg gibt, eine zu erzeugen.
+
+**Es sucht nicht nach Secrets oder unsicheren Code-Mustern.** gitleaks und
+semgrep machen das weit besser. Dieses Werkzeug deckt ein Problem ab, das jene
+nicht abdecken.
+
+**Es bringt den Agenten nicht dazu, besseren Code zu schreiben.** Es macht nur
+eine falsche Änderung sichtbar, bevor sie ausgeliefert wird.
+
+**Es ersetzt kein Code-Review.** Es filtert genau das eine heraus, was Review am
+schlechtesten findet: eine kleine, plausible Änderung an Code, der schon richtig
+war.
 
 ## Tests
 
@@ -195,23 +180,24 @@ Das Ursprungsprojekt friert 19 Pfade von mehreren Hundert ein.
 python tests/test_gates.py
 ```
 
-16 Tests. Sie bauen ein echtes Git-Repository in einem temporären Verzeichnis,
-machen echte Commits und starten die Gates als Subprozesse. Nichts ist gemockt,
-denn getestet wird genau, wie die Gates Git lesen.
+Es sind 16. Sie legen ein echtes Git-Repository in einem temporären Verzeichnis
+an, machen echte Commits und starten die Gates als eigene Prozesse. Nichts ist
+gemockt, denn getestet wird, wie die Gates Git lesen.
 
-Sie decken auch die teuer gelernten Bugs ab, darunter der, bei dem das Deklarieren
-von `src/db/sync-notices.py` stillschweigend `src/db/sync_orders.py` entsperrte,
-weil ein Regex den Bindestrich verschluckte.
+Die teuer gelernten Bugs sind ebenfalls dabei. Zum Beispiel entsperrte das
+Deklarieren von `src/db/sync-notices.py` früher stillschweigend
+`src/db/sync_orders.py`, weil ein regulärer Ausdruck den Bindestrich
+verschluckte.
 
-Ein Repository, das behauptet, Verifikation müsse ausführbar sein, sollte das
-zuerst bei sich selbst zeigen können. Schwäche die Drei-Zeilen-Regel ab und 3
-Tests fallen um. Zerbrich die Bindestrich-Behandlung und der Pfad-Test fällt um.
-Probier es aus.
+Ein Repository, das behauptet, Verifikation müsse ausführbar sein, sollte das an
+sich selbst zeigen können. Lockere die Drei-Zeilen-Regel und 3 Tests fallen um.
+Zerbrich die Bindestrich-Behandlung und der Pfad-Test fällt um. Probier es
+selbst.
 
-## Ebenfalls enthalten
+## Was hier sonst noch liegt
 
-`FAILURE_MODES.md` enthält die Vorfälle, aus denen diese Gates entstanden sind,
-in dem Format, das sie nützlich gemacht hat:
+**`FAILURE_MODES.md`** enthält die 28 Vorfälle, aus denen diese Gates entstanden
+sind. Jeder besteht aus vier Zeilen.
 
 ```
 Symptom   wie es aussah
@@ -220,16 +206,16 @@ Behebung  was sich geändert hat
 Regel     was ab jetzt gilt
 ```
 
-Ein Test, ob ein Vorfall in diese Datei gehört: **wenn ich das nicht
-aufschreibe, mache ich es dann wieder?** Wenn ja, kommt er rein, auch wenn nichts
-kaputtgegangen ist. Was sich wiederholt, sind fast nie die dramatischen Ausfälle.
-Es sind die kleinen Schleifen, in die man jedes Mal hineinläuft.
+Es gibt genau einen Test, ob etwas in diese Datei gehört: **wenn ich das nicht
+aufschreibe, mache ich es dann wieder?** Lautet die Antwort ja, kommt es rein,
+auch wenn nichts kaputtgegangen ist. Was sich wiederholt, ist selten der
+dramatische Ausfall. Es ist dieselbe Kleinigkeit, über die man jedes Mal
+stolpert.
 
-`skill/SKILL.md` ist die agentenseitige Hälfte: die Betriebsregeln, die zu den
-Gates gehören. Gates fangen, was sich mechanisch prüfen lässt. Die Skill deckt
-den Rest ab, etwa ehrlich darüber zu berichten, welche Prüfungen du tatsächlich
-ausgeführt hast.
+**`skill/SKILL.md`** enthält die Betriebsregeln, die ein Agent liest. Die Gates
+fangen nur, was sich mechanisch prüfen lässt. Das hier deckt den Rest ab, etwa
+nur die Prüfungen zu berichten, die du tatsächlich ausgeführt hast.
 
 ## Lizenz
 
-MIT. Nimm, was nützt, wirf den Rest weg.
+MIT. Nimm mit, was nützt.

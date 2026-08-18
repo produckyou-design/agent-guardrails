@@ -1,7 +1,10 @@
 name: gates
 
-# The same gates as the local hook. Local hooks can be skipped with
-# --no-verify. This one cannot.
+# Copy this to .github/workflows/gates.yml in your repository.
+# It assumes the gates were installed into scripts/, which is what
+# install.sh and install.ps1 do.
+#
+# Local hooks can be skipped with --no-verify. This one cannot.
 
 on:
   pull_request:
@@ -25,6 +28,3 @@ jobs:
 
       - name: git policy
         run: python scripts/check_git_policy.py
-
-      - name: self-test
-        run: python tests/test_gates.py
