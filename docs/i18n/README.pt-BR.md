@@ -7,6 +7,26 @@ estava pronto. São dois arquivos Python, sem dependências para instalar.
 
 ---
 
+## Isto se aplica a você? Dois minutos para descobrir
+
+Peça ao seu agente uma mudança pequena e bem delimitada. Algo como "ajusta o
+espaçamento da página de configurações". Depois, antes de ler o código:
+
+```sh
+git diff --stat
+```
+
+Conte os arquivos. Se o número for maior do que você pediu, abra os extras.
+Normalmente você vai encontrar um rename, uma refatoração ou uma limpeza de algo
+que já funcionava.
+
+É esse o problema que esta ferramenta resolve. Não é que o agente escreva código
+ruim. É que ele melhorou algo que você não pediu, e você teria que perceber isso
+no review, toda vez, para sempre.
+
+Se o diff tiver só o que você pediu, talvez você ainda não precise disto. Volte
+na primeira vez em que não for assim.
+
 ## Que problema isto resolve
 
 Quando você entrega código a um agente de IA, o problema geralmente não vem do
@@ -53,6 +73,21 @@ caminhos é recusado. Quando isso acontece, tudo o que você escreveu acima apar
 no terminal: por que está travado, o que quebra se você errar e o que precisa
 saber antes de mexer. Aparece **no momento em que alguém é bloqueado**, e não
 dentro de um arquivo que ninguém abre.
+
+É assim que fica quando um agente tenta.
+
+```
+$ git commit -m "invoice: tidy up rounding"
+
+frozen: FAIL - a frozen path was changed
+  src/billing/charge.py
+      [Billing] Finished and in production. Not on any roadmap.
+      breaks -> Wrong math still renders a normal screen. Only the amount changes.
+        - Partial refunds live in refund.py, not here.
+        - Failure rolls the whole transaction back. Do not weaken that.
+        - Currency rounding is decided once, at the boundary. Not per call site.
+      verify -> pytest tests/test_billing.py -q
+```
 
 ### Se você realmente precisar mudar
 

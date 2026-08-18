@@ -7,6 +7,22 @@
 
 ---
 
+## 这跟你有关吗？两分钟就能确认
+
+给代理一个小而明确的任务，比如"修一下设置页的间距"。然后，在读代码之前先敲这个：
+
+```sh
+git diff --stat
+```
+
+数一下文件数。如果比你要求的多，就把多出来的打开看看。通常你会看到一次重命名、
+一次重构，或者对某段本来就好好的代码做的"清理"。
+
+这就是这个工具要解决的问题。不是代理写得烂，而是它改进了你没要求它改进的东西，
+而这件事需要你在评审里每一次、一直都能发现。
+
+如果 diff 里只有你要的那件事，你现在可能还用不上它。等哪天不是这样了再回来。
+
 ## 它解决什么问题
 
 把代码交给 AI 代理时，麻烦通常不是出在它新写的代码上，而是出在它顺路碰到的代码上。
@@ -46,6 +62,21 @@
 接着安装 pre-commit 钩子，任何改动这些路径的提交都会被拒绝。这时你上面写的内容会原样
 打印在终端里：为什么锁住、改错了会坏成什么样、动手之前需要知道什么。它出现在**有人被
 挡住的那一刻**，而不是躺在一个没人打开的文件里。
+
+代理真的动手时，看到的是这样：
+
+```
+$ git commit -m "invoice: tidy up rounding"
+
+frozen: FAIL - a frozen path was changed
+  src/billing/charge.py
+      [Billing] Finished and in production. Not on any roadmap.
+      breaks -> Wrong math still renders a normal screen. Only the amount changes.
+        - Partial refunds live in refund.py, not here.
+        - Failure rolls the whole transaction back. Do not weaken that.
+        - Currency rounding is decided once, at the boundary. Not per call site.
+      verify -> pytest tests/test_billing.py -q
+```
 
 ### 如果确实需要改
 

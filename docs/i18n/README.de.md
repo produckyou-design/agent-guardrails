@@ -8,6 +8,26 @@ Abhängigkeiten zum Installieren.
 
 ---
 
+## Betrifft dich das? Zwei Minuten reichen
+
+Gib deinem Agenten eine kleine, klar umrissene Aufgabe. Etwa "korrigier die
+Abstände auf der Einstellungsseite". Und dann, bevor du den Code liest:
+
+```sh
+git diff --stat
+```
+
+Zähl die Dateien. Sind es mehr, als du verlangt hast, schau dir die übrigen an.
+Meistens findest du eine Umbenennung, ein Refactoring oder das Aufräumen von
+etwas, das bereits funktionierte.
+
+Genau das löst dieses Werkzeug. Es geht nicht darum, dass der Agent schlechten
+Code schreibt. Es geht darum, dass er etwas verbessert hat, worum du nicht
+gebeten hast, und dass du das im Review jedes Mal und für immer bemerken müsstest.
+
+Enthält der Diff nur das, worum du gebeten hast, brauchst du das hier vielleicht
+noch nicht. Komm beim ersten Mal wieder, an dem es anders ist.
+
 ## Welches Problem das löst
 
 Wenn du Code an einen KI-Agenten gibst, kommt der Ärger meist nicht von dem
@@ -55,6 +75,21 @@ verändert, wird abgelehnt. In diesem Moment wird alles, was du oben geschrieben
 hast, im Terminal ausgegeben: warum es gesperrt ist, was kaputtgeht, wenn du dich
 irrst, und was du wissen musst, bevor du es anfasst. Es erscheint **genau dann,
 wenn jemand blockiert wird**, und nicht in einer Datei, die niemand öffnet.
+
+So sieht das aus, wenn ein Agent es versucht.
+
+```
+$ git commit -m "invoice: tidy up rounding"
+
+frozen: FAIL - a frozen path was changed
+  src/billing/charge.py
+      [Billing] Finished and in production. Not on any roadmap.
+      breaks -> Wrong math still renders a normal screen. Only the amount changes.
+        - Partial refunds live in refund.py, not here.
+        - Failure rolls the whole transaction back. Do not weaken that.
+        - Currency rounding is decided once, at the boundary. Not per call site.
+      verify -> pytest tests/test_billing.py -q
+```
 
 ### Wenn du es wirklich ändern musst
 

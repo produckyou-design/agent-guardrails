@@ -280,7 +280,7 @@ def check(base: str | None, head: str, cwd: Path = BASE_DIR) -> int:
         if entry.get("what_breaks"):
             print(f"      breaks -> {entry['what_breaks']}")
         for note in entry.get("before_you_touch") or []:
-            print(f"        · {note}")
+            print(f"        - {note}")
         if entry.get("how_to_verify"):
             print(f"      verify -> {entry['how_to_verify']}")
     print()

@@ -7,6 +7,26 @@ terminé. Ce sont deux fichiers Python, sans aucune dépendance à installer.
 
 ---
 
+## Est-ce que cela vous concerne ? Deux minutes pour le savoir
+
+Demandez à votre agent une modification petite et bien délimitée. Par exemple
+« corrige les espacements de la page de réglages ». Puis, avant de lire le code :
+
+```sh
+git diff --stat
+```
+
+Comptez les fichiers. Si le nombre dépasse ce que vous avez demandé, ouvrez les
+fichiers en trop. Vous y trouverez le plus souvent un renommage, une
+refactorisation, ou le nettoyage de quelque chose qui fonctionnait déjà.
+
+C'est le problème que cet outil résout. Ce n'est pas que l'agent écrit du
+mauvais code. C'est qu'il a amélioré quelque chose que vous n'aviez pas demandé,
+et qu'il faudrait le remarquer en revue, à chaque fois, indéfiniment.
+
+Si le diff ne contient que ce que vous avez demandé, vous n'en avez peut-être pas
+encore besoin. Revenez la première fois où ce ne sera plus le cas.
+
 ## Quel problème cela résout
 
 Quand vous confiez du code à un agent IA, l'ennui ne vient généralement pas du
@@ -54,6 +74,21 @@ chemins est refusé. À ce moment-là, tout ce que vous avez écrit ci-dessus
 s'affiche dans le terminal : pourquoi c'est verrouillé, ce qui casse si vous vous
 trompez, et ce qu'il faut savoir avant d'y toucher. Cela apparaît **au moment où
 quelqu'un est bloqué**, et non dans un fichier que personne n'ouvre.
+
+Voici ce que cela donne quand un agent essaie.
+
+```
+$ git commit -m "invoice: tidy up rounding"
+
+frozen: FAIL - a frozen path was changed
+  src/billing/charge.py
+      [Billing] Finished and in production. Not on any roadmap.
+      breaks -> Wrong math still renders a normal screen. Only the amount changes.
+        - Partial refunds live in refund.py, not here.
+        - Failure rolls the whole transaction back. Do not weaken that.
+        - Currency rounding is decided once, at the boundary. Not per call site.
+      verify -> pytest tests/test_billing.py -q
+```
 
 ### Si vous devez vraiment le modifier
 

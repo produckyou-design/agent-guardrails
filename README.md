@@ -7,6 +7,26 @@ already finished. It is two Python files with no dependencies to install.
 
 ---
 
+## Does this apply to you? Two minutes to find out
+
+Ask your agent for one small, contained change. Something like "fix the spacing
+on the settings page." Then, before you read the code:
+
+```sh
+git diff --stat
+```
+
+Count the files. If the number is larger than what you asked for, look at the
+extra ones. You will usually find a rename, a refactor, or a cleanup of
+something that was already working.
+
+That is the problem this tool solves. It is not that the agent wrote bad code.
+It is that it improved something you did not ask it to improve, and you would
+have to notice that in review, every time, forever.
+
+If the diff only contains what you asked for, you may not need this yet. Come
+back the first time it does not.
+
 ## What problem this solves
 
 When you hand code to an AI agent, the trouble usually does not come from the
@@ -53,6 +73,21 @@ refused. When that happens, everything you wrote above is printed in the
 terminal: why it is locked, what breaks if you get it wrong, and what you need to
 know before touching it. It appears **at the moment someone is blocked**, rather
 than sitting in a file nobody opens.
+
+Here is what that looks like when an agent tries it.
+
+```
+$ git commit -m "invoice: tidy up rounding"
+
+frozen: FAIL - a frozen path was changed
+  src/billing/charge.py
+      [Billing] Finished and in production. Not on any roadmap.
+      breaks -> Wrong math still renders a normal screen. Only the amount changes.
+        - Partial refunds live in refund.py, not here.
+        - Failure rolls the whole transaction back. Do not weaken that.
+        - Currency rounding is decided once, at the boundary. Not per call site.
+      verify -> pytest tests/test_billing.py -q
+```
 
 ### If you genuinely need to change it
 

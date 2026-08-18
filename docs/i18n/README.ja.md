@@ -7,6 +7,25 @@ AI コーディングエージェントがすでに完成したコードに手�
 
 ---
 
+## 自分に関係ある話か。2 分で分かります
+
+エージェントに小さくて範囲のはっきりした作業を 1 つ頼んでみてください。「設定
+ページの余白を直して」くらいで十分です。そしてコードを読む前に、これを打ちます。
+
+```sh
+git diff --stat
+```
+
+ファイル数を数えます。頼んだ内容より多ければ、その余分なものを開いてみてください。
+たいていは名前の変更か、リファクタか、すでに動いていたコードの「整理」が入っています。
+
+このツールが解決するのはそれです。エージェントが下手なコードを書いたのではありません。
+頼んでいないものを改善していて、それをレビューで毎回、ずっとあなたが見つけなければ
+ならない。それが問題です。
+
+差分に頼んだものしか入っていないなら、まだ必要ないかもしれません。そうでなくなった
+日にまた来てください。
+
 ## 何を解決するのか
 
 AI エージェントにコードを任せたとき、問題はたいてい新しく書いたコードから起きません。
@@ -51,6 +70,21 @@ AI エージェントにコードを任せたとき、問題はたいてい新�
 そのとき、上に書いた内容がそのまま端末に出ます。なぜロックしたのか、間違えると何が
 壊れるのか、触る前に何を知っておくべきなのか。**誰かが止められたその瞬間に**出ます。
 誰も開かないファイルの中ではなく。
+
+エージェントが実際に触ろうとすると、こう見えます。
+
+```
+$ git commit -m "invoice: tidy up rounding"
+
+frozen: FAIL - a frozen path was changed
+  src/billing/charge.py
+      [Billing] Finished and in production. Not on any roadmap.
+      breaks -> Wrong math still renders a normal screen. Only the amount changes.
+        - Partial refunds live in refund.py, not here.
+        - Failure rolls the whole transaction back. Do not weaken that.
+        - Currency rounding is decided once, at the boundary. Not per call site.
+      verify -> pytest tests/test_billing.py -q
+```
 
 ### どうしても変更が必要なら
 

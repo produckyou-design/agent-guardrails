@@ -7,6 +7,24 @@ AI 코딩 에이전트가 이미 완성된 코드를 건드리면 커밋을 거�
 
 ---
 
+## 나한테 해당되는 얘긴가? 2분이면 확인됩니다
+
+에이전트에게 작고 명확한 작업 하나를 시켜보세요. "설정 페이지 간격 좀 고쳐줘"
+같은 것이면 됩니다. 그리고 코드를 읽기 전에 이것부터 쳐보세요.
+
+```sh
+git diff --stat
+```
+
+파일 수를 세어봅니다. 시킨 것보다 많으면, 그 나머지를 열어봅니다. 대개 이름
+변경이나 리팩터링, 또는 이미 잘 돌아가던 코드의 "정리"가 들어 있습니다.
+
+이 도구가 푸는 문제가 그겁니다. 에이전트가 코드를 못 써서가 아닙니다. 시키지도
+않은 것을 개선해 놓았고, 그걸 매번 리뷰에서 당신이 알아채야 한다는 게 문제입니다.
+
+diff에 시킨 것만 들어 있다면 아직 필요 없을 수도 있습니다. 안 그런 날 다시 오시면
+됩니다.
+
 ## 어떤 문제를 푸는가
 
 AI 에이전트에게 코드를 맡기면, 문제는 대개 에이전트가 새로 쓴 코드에서 생기지
@@ -51,6 +69,21 @@ AI 에이전트에게 코드를 맡기면, 문제는 대개 에이전트가 새�
 터미널에 위에 적어둔 내용이 그대로 출력됩니다. 왜 잠갔는지, 틀리면 뭐가 깨지는지,
 건드리기 전에 알아야 할 게 뭔지가 **막히는 그 순간에** 보입니다. 아무도 열어보지
 않는 파일 안이 아니라요.
+
+에이전트가 실제로 시도했을 때 이렇게 보입니다.
+
+```
+$ git commit -m "invoice: tidy up rounding"
+
+frozen: FAIL - a frozen path was changed
+  src/billing/charge.py
+      [Billing] Finished and in production. Not on any roadmap.
+      breaks -> Wrong math still renders a normal screen. Only the amount changes.
+        - Partial refunds live in refund.py, not here.
+        - Failure rolls the whole transaction back. Do not weaken that.
+        - Currency rounding is decided once, at the boundary. Not per call site.
+      verify -> pytest tests/test_billing.py -q
+```
 
 ### 정말 고쳐야 한다면
 
