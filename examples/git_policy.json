@@ -1,0 +1,19 @@
+{
+  "_doc": [
+    "Branches that linger are not a tidiness problem. Real unmerged work gets",
+    "buried in them. This checks for branches whose content is genuinely not",
+    "on the main line, and for worktrees left checked out.",
+    "",
+    "exempt_branches takes a reason, not just a name. Write what must NOT be",
+    "merged from it, so the next person does not merge the whole thing."
+  ],
+  "main_ref": "origin/main",
+  "exempt_branches": [
+    {
+      "name": "spike/new-parser",
+      "reason": "Throwaway experiment kept for reference.",
+      "do_not_merge": "The vendored parser fork in third_party/. Only the benchmark script is worth keeping."
+    }
+  ],
+  "allowed_worktrees": []
+}

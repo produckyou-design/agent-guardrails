@@ -1,0 +1,57 @@
+{
+  "_doc": [
+    "Freeze finished code at the source level.",
+    "",
+    "Do not list paths only. A path with no reason gets unlocked by the next",
+    "person who needs it. What makes this work is what_breaks: the person",
+    "unlocking has to know what they are risking.",
+    "",
+    "To unlock, the commit message needs three lines:",
+    "  UNFREEZE: <path or label> - why this has to change now",
+    "  UNFREEZE-IMPACT: what breaks, and how, if this is wrong",
+    "  UNFREEZE-ROLLBACK: how to undo it, with the command if possible",
+    "",
+    "If you cannot write the impact and the rollback, you are not ready to",
+    "unlock it. That judgment falls out of the three lines by itself."
+  ],
+  "version": 1,
+  "frozen": [
+    {
+      "label": "Billing",
+      "frozen_at": "2026-01-15",
+      "paths": [
+        "src/billing/charge.py",
+        "src/billing/refund.py"
+      ],
+      "reason": "Finished and in production. Not on any roadmap.",
+      "what_breaks": "Wrong math still renders a normal screen. Only the amount changes.",
+      "before_you_touch": [
+        "Partial refunds live in refund.py, not here.",
+        "Failure rolls the whole transaction back. Do not weaken that.",
+        "Currency rounding is decided once, at the boundary. Not per call site."
+      ],
+      "how_to_verify": "pytest tests/test_billing.py -q"
+    },
+    {
+      "label": "Auth token issuance",
+      "frozen_at": "2026-01-15",
+      "paths": [
+        "src/auth/token.py"
+      ],
+      "reason": "Security-critical and settled. Every change here needs review.",
+      "what_breaks": "Sessions stay valid past expiry, or everyone gets logged out.",
+      "before_you_touch": [
+        "Clock skew tolerance is deliberate. Do not tighten it without data.",
+        "Unknown algorithm means refuse, not fall back."
+      ],
+      "how_to_verify": "pytest tests/test_auth.py -q"
+    }
+  ],
+  "_note_not_frozen": [
+    "Paths deliberately left out because the roadmap touches them soon.",
+    "  src/reports/*    reporting rewrite, Q2",
+    "  src/api/v2/*     still moving",
+    "If the freeze covers everything, the gate becomes the boy who cried wolf,",
+    "and then real violations get ignored too. Leave planned work open."
+  ]
+}

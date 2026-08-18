@@ -1,0 +1,30 @@
+name: gates
+
+# The same gates as the local hook. Local hooks can be skipped with
+# --no-verify. This one cannot.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the freeze check reads history, not just the tip
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: frozen paths
+        run: python scripts/check_frozen.py --base origin/main --head HEAD
+
+      - name: git policy
+        run: python scripts/check_git_policy.py
+
+      - name: self-test
+        run: python tests/test_gates.py

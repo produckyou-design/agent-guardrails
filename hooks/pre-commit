@@ -1,0 +1,13 @@
+#!/bin/sh
+# agent-guardrails pre-commit hook
+#
+# Install:
+#   cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#
+# A rule nothing enforces is not a rule. This is where enforcement happens.
+
+set -e
+PY=${PYTHON:-python}
+
+$PY scripts/check_frozen.py
+$PY scripts/check_git_policy.py
