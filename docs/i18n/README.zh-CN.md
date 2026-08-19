@@ -1,57 +1,104 @@
 # agent-guardrails
 
-一个在 AI 编码代理改动已完工代码时拒绝提交的工具。它由两个 Python 文件组成，
-没有需要安装的依赖。
+让 AI 编码代理“只改一下间距”，结果回来一看改了 12 个文件？
+
+函数被重命名，重复代码被“清理”，一个稳定运行了几个月的重试循环也被顺手简化。diff 看起来很合理，测试甚至可能全部通过。
+
+几天后，另一个毫不相关的地方坏了。
+
+`agent-guardrails` 就是为这个问题准备的小型 Git gate：**阻止 AI 代理修改已经完成、而且不属于当前任务范围的代码。**
+
+它不是再往 prompt 里加一句“不要乱改”，而是把规则变成可执行代码。受保护路径一旦被修改，commit 直接被拒绝。
+
+无依赖。无模型 API。只有 Python 和 Git。
 
 [English](../../README.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Português](README.pt-BR.md) | [日本語](README.ja.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Русский](README.ru.md)
 
 ---
 
-## 这跟你有关吗？两分钟就能确认
+## 30 秒测试
 
-给代理一个小而明确的任务，比如"修一下设置页的间距"。然后，在读代码之前先敲这个：
+给代理一个很小的任务：
+
+```text
+只调整设置页面的间距。
+```
+
+结束后运行：
 
 ```sh
 git diff --stat
 ```
 
-数一下文件数。如果比你要求的多，就把多出来的打开看看。通常你会看到一次重命名、
-一次重构，或者对某段本来就好好的代码做的"清理"。
+如果你预期只改 2 个文件，却出现了 9 个，就打开另外 7 个看看。
 
-这就是这个工具要解决的问题。不是代理写得烂，而是它改进了你没要求它改进的东西，
-而这件事需要你在评审里每一次、一直都能发现。
+通常会看到：
 
-如果 diff 里只有你要的那件事，你现在可能还用不上它。等哪天不是这样了再回来。
+```text
+“为了更清晰而重命名。”
+“抽取了重复逻辑。”
+“删除了看起来未使用的代码。”
+“为了保持一致顺手修改了附近代码。”
+```
+
+都很合理。也都不是你要求的。
+
+如果你的 diff 一直只包含明确要求的改动，那你可能暂时不需要它。
 
 ## 它解决什么问题
 
-把代码交给 AI 代理时，麻烦通常不是出在它新写的代码上，而是出在它顺路碰到的代码上。
+假设这个文件已经在生产环境稳定运行三个月：
 
-比如你让它修一下账单页的间距。它常常会顺手把旁边的税额计算也整理一遍。这不是马虎。
-代理没有办法知道那段代码为什么长成那样，也不知道它是怎么变成现在这样的。而且这种改动
-在代码评审里看起来并不奇怪。也没有测试覆盖它，因为那段代码一直好好的，没人想过要给它
-写测试。
+```text
+src/billing/charge.py
+```
 
-你可以在项目文档里写"不要动这个文件"。这挡不住。在这个工具诞生的那个项目里，这条规则
-在文档里放了半年，一直被违反，连刚读完那句话的代理也照样违反，因为没有任何代码会去检查它。
+今天的任务只是：
 
-这个工具把那条规则变成**真正会执行的东西**。
+```text
+调整发票页面间距。
+```
 
-## 它怎么工作
+代理不知道 `charge.py` 为什么长得有点奇怪。它不知道那段分支是不是六个月前真实事故留下的防线。它看到的是代码，不是代码形成的历史。
 
-你把已完工的路径写进 `frozen.json`。
+所以我们经常写：
+
+```text
+不要修改这个文件。
+```
+
+放进 `AGENTS.md`、`CLAUDE.md`、prompt 或注释。
+
+问题是，文档只能解释规则，不能执行规则。
+
+`agent-guardrails` 把：
+
+```text
+请不要改这里
+```
+
+变成：
+
+```text
+commit rejected
+```
+
+## 工作方式
+
+把已经完成的路径写进 `frozen.json`：
 
 ```json
 {
   "frozen": [
     {
-      "label": "计费",
+      "label": "Billing",
       "paths": ["src/billing/charge.py"],
-      "reason": "已完工并在生产运行。不在任何路线图上。",
-      "what_breaks": "算错了画面依然正常，只有金额会变。",
+      "reason": "已经完成并在生产环境运行，不在当前路线图中。",
+      "what_breaks": "计算错误时页面仍然正常显示，只有金额会错。",
       "before_you_touch": [
-        "部分退款由 refund.py 处理，不在这里。",
-        "失败时会回滚整笔事务。不要削弱这一点。"
+        "部分退款由 refund.py 处理。",
+        "失败时会回滚整个事务。",
+        "货币舍入只在边界处决定一次。"
       ],
       "how_to_verify": "pytest tests/test_billing.py -q"
     }
@@ -59,78 +106,136 @@ git diff --stat
 }
 ```
 
-接着安装 pre-commit 钩子，任何改动这些路径的提交都会被拒绝。这时你上面写的内容会原样
-打印在终端里：为什么锁住、改错了会坏成什么样、动手之前需要知道什么。它出现在**有人被
-挡住的那一刻**，而不是躺在一个没人打开的文件里。
+代理修改该路径并尝试 commit 时，会在最需要上下文的时刻被拦住：
 
-代理真的动手时，看到的是这样：
-
-```
+```text
 $ git commit -m "invoice: tidy up rounding"
 
 frozen: FAIL - a frozen path was changed
   src/billing/charge.py
-      [Billing] Finished and in production. Not on any roadmap.
-      breaks -> Wrong math still renders a normal screen. Only the amount changes.
-        - Partial refunds live in refund.py, not here.
-        - Failure rolls the whole transaction back. Do not weaken that.
-        - Currency rounding is decided once, at the boundary. Not per call site.
+      [Billing] Finished and in production.
+      breaks -> Wrong math still renders a normal screen.
       verify -> pytest tests/test_billing.py -q
 ```
 
-### 如果确实需要改
+gate 是本地 Python，不调用 LLM。
 
-在提交信息里写三行。
+正常工作直接通过。只有越界时才显示额外上下文。
 
+## 如果真的必须改被冻结的文件
+
+Frozen 不代表永远不能改。
+
+合法修改需要在 commit message 里写三行：
+
+```text
+UNFREEZE: src/billing/charge.py - 新支付方式需要在这里增加分支
+UNFREEZE-IMPACT: 逻辑错误可能改变实际扣款金额
+UNFREEZE-ROLLBACK: git revert <sha> 后重新运行 pytest tests/test_billing.py
 ```
-UNFREEZE: src/billing/charge.py - 新支付方式需要在这里加一个分支
-UNFREEZE-IMPACT: 算错了画面依然正常，只有金额会变
-UNFREEZE-ROLLBACK: git revert <sha>，然后重跑 pytest tests/test_billing.py
+
+少一行，commit 就会被拒绝。
+
+因为“为什么现在要改”还不够。改动已经验证过的代码之前，你还应该知道：**如果错了会坏什么**，以及 **怎么退回去**。
+
+## 实际会改变什么
+
+### 小任务不再轻易变成巨大 diff
+
+```text
+请求：
+修一下间距
+
+额外改动：
+重命名组件
+重构 API helper
+简化 retry
+合并类型定义
 ```
 
-三行少任何一行，提交都会被拒绝。
+范围漂移会在进入主线前暴露出来。
 
-为什么是三行而不是一行？因为理由只回答"为什么现在要改"。它不说你错了会发生什么，也不说
-别人怎么退回原来的状态。而真正重要的恰恰是这两件事，被省略掉的也恰恰是这两件事。
+### 看起来奇怪但有原因的代码能活下来
 
-**如果你写不出影响和回滚，说明你还没准备好动那段代码。** 而且你是现在发现的，不是在生产
-环境里发现的。目的不是让你填表，而是让这个判断在写这三行的过程中自己浮出来。
+成熟代码库里总有“看起来应该清理”的代码，但它可能正在托住某个真实问题。`before_you_touch` 会在代理真正准备动手时把原因展示出来。
 
-## 有什么变好
+### Review 有了优先级
 
-**你不用再读每一条提交。** 假设代理一夜之间提交了 34 次，其中两条带着 UNFREEZE 行。
-先读那两条就行。代理并没有变得更谨慎，只是现在它会标出自己在哪里越出了你给的范围。
+如果夜间代理生成 34 个 commit，其中只有 2 个带 `UNFREEZE`，先看这 2 个。
 
-**"修一下间距"不再变成十二个文件的改动。** 你只要了一件事，而 diff 里还夹着税额计算的
-重构，以及一段重试循环的"清理"——那段循环存在只是因为上游 API 不可靠。这种情况会变少。
+### 模型可以换，规则不换
 
-**那段撑着东西的临时方案不会再被整理掉。** 每个代码库里都有一行看起来不对、实际上撑着
-什么的代码。每隔几个月就有人把它清理掉，之后某处出问题，却没人会联想到那次清理。
-`before_you_touch` 就是钉在那个位置上的警示牌。
+今天 Claude，明天 Codex，下周 Gemini。规则存在 Git 里，不依赖模型记忆。
 
-**规则不再取决于有没有人记得。** "别动移动端布局"是建议，而一个过不去的提交是信息。
-后者在凌晨三点也管用，对一个从没见过你的模型也管用，在它进入你仓库的第一分钟就管用。
+## 能省 token 吗？
 
-## 第二个工具
+gate 本身消耗 **0 个 LLM token**。它们只是本地脚本：
 
-`check_git_policy.py` 用来找出没有合并的分支和忘了清理的 worktree。
+```sh
+python scripts/check_frozen.py
+python scripts/check_git_policy.py
+python scripts/check_scope.py
+```
 
-分支留着本身不算大问题。问题在于**真正还没合并的工作被埋在里面**。代理会不断创建分支和
-worktree，然后转去做下一件事，于是这些就堆积起来。
+真正可能减少的是错误改动之后的昂贵工作：
 
-它不是简单地列出分支。它用补丁等价性（`git cherry`）来区分：内容确实不在 main 上的分支，
-和那些已经通过 squash 或 rebase 合并进去的分支。在它诞生的那个项目里，这个区分把
-"11 个未合并分支"变成了"1 个真正要紧的"。
+- 不必要的文件探索
+- 越界重构
+- 为这些重构生成代码
+- 额外测试
+- 回归问题定位
+- 回滚
+- 重新做任务
+
+这里故意没有“节省 37%”之类的数字，因为结果取决于你的代理多常越界。
+
+这不是 token 优化器。它是在阻止本来就不该产生的工作。
+
+## 可选的任务范围限制
+
+`check_scope.py` 可以把某个任务限制在允许路径内：
+
+```text
+任务：设置页面间距
+
+允许：
+frontend/settings/**
+frontend/styles/settings.css
+
+禁止：
+backend/**
+database/**
+billing/**
+```
+
+scope 是可选功能。没有 scope 文件时检查处于 inactive 状态。
+
+## 还能找出真正遗留的 Git 工作
+
+`check_git_policy.py` 不只是数分支。它通过 patch equivalence（`git cherry`）区分：真正还没进 `main` 的工作，以及已经通过 squash/rebase 合入的工作。
+
+在最初的项目里，这把“11 个未合并分支”缩小成了“1 个真正有未完成工作的分支”。
 
 ## 它从哪里来
 
-它出自一个真实项目：AI 代理在那里连续几个月编写生产代码。这个过程中线上坏了 60 次。
-每一次都记录下发生了什么、下次该怎么做，其中能变成代码的规则，就变成了这些闸门。
+这不是从一套漂亮的 agent safety 理论开始设计的。
 
-这个仓库带的是在那个项目之外也适用的两个，外加它们背后的 28 起事故。事故记录在
-`FAILURE_MODES.md` 里。
+它来自 AI 代理在真实生产代码上连续工作几个月的经验。生产环境一共坏过 60 次。每次都按下面的格式记录：
+
+```text
+Symptom   看起来发生了什么
+Cause     为什么发生
+Fix       怎么修
+Rule      下次怎么办
+```
+
+其中可以机械执行的规则，最终变成了这些 gate。
+
+仓库里的 `FAILURE_MODES.md` 保留了 28 个真实失败记录。
 
 ## 安装
+
+Linux / macOS：
 
 ```sh
 git clone https://github.com/produckyou-design/agent-guardrails
@@ -140,35 +245,56 @@ git clone https://github.com/produckyou-design/agent-guardrails
 Windows：
 
 ```powershell
+git clone https://github.com/produckyou-design/agent-guardrails
 .\agent-guardrails\install.ps1 C:\path\to\your-repo
 ```
 
-想手动装的话，把 `gates/*.py` 复制到你项目的 `scripts/`，把 `hooks/pre-commit` 放进
-`.git/hooks/`，再把 `examples/workflow.yml` 复制到 `.github/workflows/`。
+诊断：
 
-本地钩子可以用 `--no-verify` 跳过，CI 那道跳不过。两个都装是值得的。
+```sh
+python scripts/doctor.py
+python scripts/doctor.py --json
+```
 
-**一开始把冻结列表留空。** 等哪天代理动了你以为已经完工的文件，再把那条路径加进去。
+本地 hook 可以用 `--no-verify` 绕过，CI 不行。建议两者都用。
 
-## 不要什么都冻
+## 从空列表开始
 
-如果冻结覆盖了整个仓库，闸门就会一直响，然后真正的违规也会跟噪音一起被忽略。你马上要
-动的路径，就敞开放着。
+不要一开始冻结整个仓库。
 
-它诞生的那个项目在几百条路径里只冻了 19 条。
+```json
+{
+  "frozen": []
+}
+```
 
-## 这个工具不做什么
+第一次看到代理“顺手优化”已经完成的代码时，再把那条路径加入即可。
 
-**它不衡量任何东西改善了多少。** 这个 README 里没有 benchmark 表格，因为没有诚实的
-办法做出一张。
+频繁触发的 gate 最终只会变成噪音。只保护真正完成、而且改坏成本很高的代码。
 
-**它不扫描密钥，也不扫描不安全的代码写法。** gitleaks 和 semgrep 做这件事强得多。
-这个工具覆盖的是它们不覆盖的问题。
+## Staging 纪律
 
-**它不会让代理写出更好的代码。** 它只是让错误的改动在上线前显形。
+避免：
 
-**它不替代代码评审。** 它只过滤评审最容易漏掉的那一类：对本来就正确的代码做出的、
-微小而看起来合理的改动。
+```sh
+git add -A
+git add .
+git add -u
+```
+
+更推荐明确写出文件：
+
+```sh
+git add src/thing.py tests/test_thing.py
+```
+
+代理不能假设共享 working tree 里的所有变更都属于自己。
+
+## 验证意味着真的执行
+
+`skill/SKILL.md` 处理那些无法仅从 diff 强制判断的规则。
+
+只读代码然后说“应该能工作”不算验证。没运行就写 `NOT_RUN`；失败就如实报告失败。可视化改动在宣布完成前应该看真实渲染结果。
 
 ## 测试
 
@@ -176,33 +302,48 @@ Windows：
 python tests/test_gates.py
 ```
 
-一共 16 个。它们在临时目录里建一个真实的 git 仓库，做真实的提交，把闸门当作独立进程
-运行。没有任何 mock，因为要测的正是闸门怎么读取 git。
+共有 16 个测试。它们创建真实的临时 Git 仓库、真实 commit，并把 gate 作为独立进程运行，而不是 mock Git 行为。
 
-用昂贵代价换来的 bug 也在里面。比如声明 `src/db/sync-notices.py` 曾经会悄悄把
-`src/db/sync_orders.py` 也解锁，原因是一个正则表达式把连字符吃掉了。
+在 gate 自己身上发现的 bug 也会保留为回归测试。
 
-一个主张"验证必须可执行"的仓库，应该能先在自己身上证明这一点。把三行规则放松，会有
-3 个测试失败；把连字符处理弄坏，路径那个测试会失败。你可以自己试。
+## 包含内容
 
-## 这里还有什么
+- `FAILURE_MODES.md` - 28 个产生这些规则的真实失败记录
+- `skill/SKILL.md` - agent 运行规则
+- `check_frozen.py` - 保护已完成路径
+- `check_scope.py` - 可选任务范围限制
+- `check_git_policy.py` - 查找真正未完成的 Git 工作
+- `check_guardrail_integrity.py` - 保护 guardrail 自身
+- `doctor.py` - 只读安装诊断
 
-**`FAILURE_MODES.md`** 收录了这些闸门来源的 28 起事故。每一起是四行。
+## 它不做什么
 
+不扫描 secret；这类工作交给 gitleaks。
+
+不检测一般危险代码模式；semgrep 更擅长。
+
+不替代 code review。
+
+也不会让 AI 写出更好的代码。
+
+它只做一件更窄的事：
+
+> 阻止那些“看起来很合理、实际上超出范围”的修改，悄悄进入已经正确运行的代码。
+
+## 一句话版本
+
+它不是再加一句 prompt：
+
+```text
+请不要无必要地修改现有代码。
 ```
-症状  当时看起来是什么样
-原因  为什么会这样
-处置  改了什么
-规则  从今往后怎么做
+
+而是当代理忽略这句话之后：
+
+```text
+commit rejected
 ```
 
-判断一件事该不该进这个文件，只有一个标准：**如果我不写下来，我会不会再犯一次？**
-如果会，就写进去，哪怕什么都没坏。真正反复出现的，很少是戏剧性的故障，而是你每次都会
-绊到的那件小事。
+## License
 
-**`skill/SKILL.md`** 是代理会读的操作规则。闸门只抓那些能机械检查的东西，其余的由它
-覆盖，比如只汇报你真正跑过的验证。
-
-## 许可证
-
-MIT。有用的拿走就行。
+MIT。需要什么就拿什么。
