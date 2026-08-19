@@ -1,66 +1,104 @@
 # agent-guardrails
 
-Una herramienta que rechaza un commit cuando tu agente de IA edita código que ya
-estaba terminado. Son dos archivos de Python, sin dependencias que instalar.
+¿Le pediste a un agente de IA «solo arregla el espaciado» y terminaste con 12 archivos modificados?
+
+Renombró una función, «limpió» código duplicado y simplificó un bucle de reintentos que llevaba meses funcionando. El diff parece razonable. Incluso puede pasar los tests.
+
+Y unos días después se rompe algo que no tenía nada que ver.
+
+`agent-guardrails` es una pequeña puerta de Git para ese problema: **impedir que los agentes de IA cambien código que ya estaba terminado y fuera del alcance de la tarea.**
+
+En vez de confiar en otra frase dentro del prompt, convierte la regla en código ejecutable. Si se modifica una ruta protegida, el commit se rechaza.
+
+Sin dependencias. Sin API de modelos. Solo Python y Git.
 
 [English](../../README.md) | [한국어](README.ko.md) | [Português](README.pt-BR.md) | [中文](README.zh-CN.md) | [日本語](README.ja.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Русский](README.ru.md)
 
 ---
 
-## ¿Esto te aplica? Dos minutos para saberlo
+## Prueba de 30 segundos
 
-Pídele a tu agente un cambio pequeño y acotado. Algo como "arregla el espaciado
-de la página de ajustes". Luego, antes de leer el código:
+Dale al agente una tarea pequeña:
+
+```text
+Corrige el espaciado de la página de configuración.
+```
+
+Al terminar:
 
 ```sh
 git diff --stat
 ```
 
-Cuenta los archivos. Si el número es mayor que lo que pediste, mira los de más.
-Normalmente encontrarás un renombrado, una refactorización o una limpieza de algo
-que ya funcionaba.
+Si esperabas dos archivos y aparecen nueve, abre los otros siete.
 
-Ese es el problema que resuelve esta herramienta. No es que el agente escriba mal
-código. Es que mejoró algo que no le pediste mejorar, y tendrías que darte cuenta
-de eso en la revisión, cada vez, siempre.
+Suelen aparecer cambios como:
 
-Si el diff solo contiene lo que pediste, quizá aún no lo necesites. Vuelve la
-primera vez que no sea así.
+```text
+"Renombrado para mayor claridad."
+"Extraje lógica duplicada."
+"Eliminé código que parecía no usarse."
+"Actualicé código cercano por consistencia."
+```
 
-## Qué problema resuelve
+Todos suenan razonables. Ninguno fue pedido.
 
-Cuando le pasas código a un agente de IA, el problema no suele venir del código
-nuevo que escribe. Viene del código que toca de camino.
+Si tus diffs ya contienen solo lo solicitado, quizá todavía no necesites esta herramienta.
 
-Supongamos que le pides que corrija el espaciado de la página de facturas. Muy a
-menudo aprovechará para ordenar también el cálculo de impuestos que está justo
-al lado. No es descuido. El agente no tiene forma de saber por qué ese código es
-como es, ni lo que costó llegar hasta ahí. Y un cambio así no parece incorrecto
-en la revisión. Tampoco hay un test que lo cubra, porque el código funcionaba y
-a nadie se le ocurrió escribirle uno.
+## El problema que resuelve
 
-Puedes poner "no toques este archivo" en la documentación del proyecto. No se
-sostiene. En el proyecto del que salió esta herramienta, esa regla estuvo seis
-meses en la documentación y se incumplió constantemente, incluso por agentes que
-acababan de leer la frase, porque ningún código la comprobaba.
+Supón que este archivo lleva tres meses funcionando correctamente en producción:
 
-Esta herramienta convierte esa regla en **algo que se ejecuta de verdad**.
+```text
+src/billing/charge.py
+```
+
+La tarea de hoy solo es:
+
+```text
+Ajustar el espaciado de la página de facturas.
+```
+
+El agente no sabe por qué `charge.py` tiene una rama rara. No sabe si existe por una caída real de hace seis meses. Ve el código actual, no la historia que lo convirtió en ese código.
+
+Por eso solemos escribir:
+
+```text
+No toques este archivo.
+```
+
+en `AGENTS.md`, `CLAUDE.md`, prompts y comentarios.
+
+El problema es que la documentación explica una regla; no la hace cumplir.
+
+`agent-guardrails` convierte:
+
+```text
+por favor, no toques esto
+```
+
+en:
+
+```text
+commit rejected
+```
 
 ## Cómo funciona
 
-Enumeras las rutas terminadas en `frozen.json`.
+Añade las rutas terminadas a `frozen.json`:
 
 ```json
 {
   "frozen": [
     {
-      "label": "Facturación",
+      "label": "Billing",
       "paths": ["src/billing/charge.py"],
-      "reason": "Terminado y en producción. No está en ninguna hoja de ruta.",
-      "what_breaks": "Un cálculo mal sigue pintando una pantalla normal. Solo cambia el importe.",
+      "reason": "Terminado, en producción y fuera del roadmap.",
+      "what_breaks": "Un cálculo incorrecto sigue mostrando una pantalla normal; solo cambia el importe.",
       "before_you_touch": [
-        "Los reembolsos parciales se manejan en refund.py, no aquí.",
-        "Un fallo revierte la transacción entera. No debilites eso."
+        "Los reembolsos parciales viven en refund.py.",
+        "Los fallos revierten toda la transacción.",
+        "El redondeo de moneda se decide una sola vez en el límite."
       ],
       "how_to_verify": "pytest tests/test_billing.py -q"
     }
@@ -68,96 +106,136 @@ Enumeras las rutas terminadas en `frozen.json`.
 }
 ```
 
-Después instalas el hook de pre-commit y cualquier commit que edite esas rutas
-queda rechazado. Cuando eso ocurre, todo lo que escribiste arriba se imprime en
-la terminal: por qué está bloqueado, qué se rompe si te equivocas y qué necesitas
-saber antes de tocarlo. Aparece **en el momento en que alguien queda bloqueado**,
-en vez de estar en un archivo que nadie abre.
+Si el agente modifica esa ruta y trata de hacer commit, se detiene justo cuando importa el contexto:
 
-Así se ve cuando un agente lo intenta.
-
-```
+```text
 $ git commit -m "invoice: tidy up rounding"
 
 frozen: FAIL - a frozen path was changed
   src/billing/charge.py
-      [Billing] Finished and in production. Not on any roadmap.
-      breaks -> Wrong math still renders a normal screen. Only the amount changes.
-        - Partial refunds live in refund.py, not here.
-        - Failure rolls the whole transaction back. Do not weaken that.
-        - Currency rounding is decided once, at the boundary. Not per call site.
+      [Billing] Finished and in production.
+      breaks -> Wrong math still renders a normal screen.
       verify -> pytest tests/test_billing.py -q
 ```
 
-### Si realmente necesitas cambiarlo
+La puerta es Python local. No llama a un LLM.
 
-Pon tres líneas en el mensaje del commit.
+El trabajo normal pasa. El contexto extra aparece solo cuando el agente cruza el límite.
 
-```
-UNFREEZE: src/billing/charge.py - el nuevo medio de pago necesita una rama aquí
-UNFREEZE-IMPACT: un cálculo mal sigue pintando una pantalla normal, solo cambia el importe
+## Si realmente hay que cambiar el archivo
+
+Congelado no significa inmutable para siempre.
+
+Un cambio legítimo exige tres líneas en el mensaje de commit:
+
+```text
+UNFREEZE: src/billing/charge.py - el nuevo método de pago necesita una rama aquí
+UNFREEZE-IMPACT: una lógica incorrecta puede cambiar los importes cobrados
 UNFREEZE-ROLLBACK: git revert <sha> y volver a ejecutar pytest tests/test_billing.py
 ```
 
-Si falta cualquiera de las tres, el commit se rechaza.
+Si falta una, el commit se rechaza.
 
-¿Por qué tres líneas y no una? Porque el motivo solo responde a "por qué cambiar
-esto ahora". No dice qué pasa si te equivocas, ni cómo vuelve alguien al punto de
-partida. Esas dos cosas son las que importan de verdad, y son exactamente las que
-se omiten.
+Porque «por qué ahora» no basta. Antes de tocar código probado también deberías saber **qué se rompe si te equivocas** y **cómo volver atrás**.
 
-**Si no puedes escribir el impacto y la reversión, todavía no estás listo para
-cambiar ese código.** Y te enteras ahora, en vez de enterarte en producción. La
-idea no es que rellenes un formulario, sino que ese juicio salga de escribir las
-tres líneas.
+## Qué cambia en la práctica
 
-## Qué mejora
+### Las tareas pequeñas dejan de convertirse en diffs gigantes
 
-**Dejas de leer todos los commits.** Supongamos que tu agente hizo 34 commits
-durante la noche. Dos llevan líneas UNFREEZE. Esos dos los lees primero. El
-agente no se volvió más cuidadoso: ahora marca dónde se salió del alcance que le
-diste.
+```text
+Pedido:
+arreglar el espaciado
 
-**"Arregla el espaciado" deja de volver como doce archivos cambiados.** Pediste
-una cosa, y el diff trae además una refactorización del cálculo de impuestos y
-una limpieza de un bucle de reintentos que solo existe porque una API externa no
-es fiable. Eso pasa menos.
+Extras inesperados:
+renombrar componente
+refactorizar helper de API
+simplificar reintentos
+fusionar tipos
+```
 
-**El apaño que sostiene algo deja de ser ordenado.** Toda base de código tiene
-una línea que parece incorrecta pero está sujetando algo. Cada pocos meses
-alguien la limpia, y más tarde algo se rompe de una forma que nadie conecta con
-aquella limpieza. `before_you_touch` es el cartel de aviso puesto en ese punto.
+El desvío de alcance se hace visible antes de entrar.
 
-**La regla deja de depender de que alguien la recuerde.** "No toques el layout
-móvil" es un consejo. Un commit que no pasa es información. El segundo funciona a
-las 3 de la mañana, con un modelo que nunca te ha visto, en su primer minuto en
-tu repositorio.
+### El código raro conserva su historia
 
-## La segunda herramienta
+Todo código maduro tiene líneas que parecen incorrectas pero sostienen algo importante. `before_you_touch` muestra la razón justo cuando un agente intenta cruzar ese límite.
 
-`check_git_policy.py` encuentra ramas sin fusionar y worktrees que quedaron
-abiertos.
+### La revisión gana prioridad
 
-Una rama que se queda ahí no es el problema en sí. El problema es que **se
-entierra en ella trabajo real sin fusionar**. Los agentes crean ramas y worktrees
-y pasan a la siguiente tarea, así que se acumulan.
+Si un agente nocturno produce 34 commits y dos contienen `UNFREEZE`, revisa esos dos primero.
 
-No se limita a listar ramas. Usa equivalencia de parches (`git cherry`) para
-distinguir las ramas cuyo contenido realmente no está en main de las que ya se
-fusionaron mediante un squash o un rebase. En el proyecto de origen, esa
-distinción convirtió "11 ramas sin fusionar" en "1 que de verdad importa".
+### Cambia el modelo; la regla permanece
+
+Claude hoy, Codex mañana, Gemini la semana que viene. La regla vive en Git, no en la memoria del modelo.
+
+## ¿Ahorra tokens?
+
+Las puertas consumen **cero tokens de LLM**. Son scripts locales:
+
+```sh
+python scripts/check_frozen.py
+python scripts/check_git_policy.py
+python scripts/check_scope.py
+```
+
+Lo que pueden reducir es el trabajo caro que sigue a un mal cambio:
+
+- exploración innecesaria de archivos
+- refactors fuera de alcance
+- generación de código para esos refactors
+- tests adicionales
+- diagnóstico de regresiones
+- rollback
+- repetir la tarea
+
+No hay una cifra tipo «ahorra 37%» porque dependería de cuánto se desvíen tus agentes.
+
+No es un optimizador de tokens. Evita trabajo que nunca debió existir.
+
+## Alcance opcional por tarea
+
+`check_scope.py` puede limitar una tarea a rutas permitidas.
+
+```text
+Tarea: espaciado de configuración
+
+Permitido:
+frontend/settings/**
+frontend/styles/settings.css
+
+Prohibido:
+backend/**
+database/**
+billing/**
+```
+
+El scope es opcional. Sin archivo de scope, la comprobación queda inactiva.
+
+## También encuentra trabajo Git abandonado
+
+`check_git_policy.py` no se limita a contar ramas. Usa equivalencia de parches (`git cherry`) para separar trabajo realmente ausente de `main` de trabajo que ya entró mediante squash o rebase.
+
+En el proyecto original, «11 ramas sin fusionar» se redujo a «1 rama con trabajo que realmente importa».
 
 ## De dónde salió
 
-Salió de un proyecto real donde agentes de IA escribieron código de producción
-durante meses. Por el camino, el sitio en producción se rompió 60 veces. Cada
-vez se anotó qué pasó y qué hacer distinto, y las reglas que podían convertirse
-en código se convirtieron en estos gates.
+No nació de una teoría limpia sobre seguridad de agentes.
 
-Este repositorio trae los dos que sirven fuera de aquel proyecto, junto con los
-28 incidentes que hay detrás. Están en `FAILURE_MODES.md`.
+Nació de meses de agentes de IA trabajando sobre un código de producción real. Producción se rompió 60 veces. Cada incidente se registró así:
+
+```text
+Symptom   qué parecía pasar
+Cause     por qué pasó
+Fix       qué se cambió
+Rule      qué hacer la próxima vez
+```
+
+Las reglas que podían hacerse cumplir mecánicamente se convirtieron en estas puertas.
+
+El repositorio incluye 28 casos en `FAILURE_MODES.md`.
 
 ## Instalación
+
+Linux / macOS:
 
 ```sh
 git clone https://github.com/produckyou-design/agent-guardrails
@@ -167,40 +245,56 @@ git clone https://github.com/produckyou-design/agent-guardrails
 Windows:
 
 ```powershell
+git clone https://github.com/produckyou-design/agent-guardrails
 .\agent-guardrails\install.ps1 C:\ruta\a\tu-repo
 ```
 
-Para hacerlo a mano, copia `gates/*.py` al `scripts/` de tu proyecto, pon
-`hooks/pre-commit` en `.git/hooks/` y copia `examples/workflow.yml` en
-`.github/workflows/`.
+Diagnóstico:
 
-Un hook local se puede saltar con `--no-verify`, pero el job de CI no. Merece la
-pena tener los dos.
+```sh
+python scripts/doctor.py
+python scripts/doctor.py --json
+```
 
-**Empieza con la lista de congelados vacía.** Añade la primera ruta el día en que
-un agente edite un archivo que creías terminado.
+El hook local puede saltarse con `--no-verify`; CI no. Se recomienda usar ambos.
 
-## No congeles todo
+## Empieza vacío
 
-Si la congelación cubre todo el repositorio, el gate salta constantemente, y
-entonces las violaciones reales se ignoran junto con el ruido. Deja abiertas las
-rutas en las que estás a punto de trabajar.
+No congeles todo el repositorio.
 
-El proyecto de origen mantiene 19 rutas congeladas de varios cientos.
+```json
+{
+  "frozen": []
+}
+```
 
-## Lo que esta herramienta no hace
+La primera vez que un agente «mejore» código ya terminado, añade esa ruta.
 
-**No mide cuánto mejora nada.** En este README no hay tabla de benchmarks porque
-no hay forma honesta de producir una.
+Una puerta que se dispara todo el tiempo se convierte en ruido. Protege solo lo que está realmente terminado y es caro de alterar.
 
-**No busca secretos ni patrones de código inseguros.** gitleaks y semgrep hacen
-eso mucho mejor. Esta herramienta cubre un problema que ellos no cubren.
+## Disciplina al hacer staging
 
-**No hace que el agente escriba mejor código.** Solo hace visible un cambio
-equivocado antes de que llegue a producción.
+Evita:
 
-**No sustituye la revisión de código.** Filtra lo único que la revisión detecta
-peor: una edición pequeña y plausible sobre código que ya era correcto.
+```sh
+git add -A
+git add .
+git add -u
+```
+
+Mejor nombra los archivos:
+
+```sh
+git add src/thing.py tests/test_thing.py
+```
+
+Un agente no puede asumir que todo cambio en un working tree compartido le pertenece.
+
+## Verificar significa ejecutar
+
+`skill/SKILL.md` cubre reglas que no pueden deducirse solo del diff.
+
+Leer código y decir «debería funcionar» no es verificar. Si no se ejecutó algo, informa `NOT_RUN`. Si falló, informa el fallo. Para cambios visuales, mira el resultado renderizado antes de dar la tarea por terminada.
 
 ## Tests
 
@@ -208,39 +302,48 @@ peor: una edición pequeña y plausible sobre código que ya era correcto.
 python tests/test_gates.py
 ```
 
-Hay 16. Crean un repositorio git real en un directorio temporal, hacen commits
-reales y ejecutan los gates como procesos aparte. No se simula nada, porque lo
-que se prueba es cómo los gates leen git.
+Hay 16 tests. Crean repositorios Git temporales reales, hacen commits reales y ejecutan las puertas como procesos separados.
 
-También están los errores que costaron caro. Por ejemplo, declarar
-`src/db/sync-notices.py` desbloqueaba en silencio `src/db/sync_orders.py`,
-porque una expresión regular se comía el guion.
+Los bugs encontrados en las propias puertas también quedan como tests de regresión.
 
-Un repositorio que sostiene que la verificación debe ser ejecutable debería poder
-demostrarlo consigo mismo. Relaja la regla de tres líneas y fallan 3 tests. Rompe
-el manejo del guion y falla el test de rutas. Compruébalo tú mismo.
+## Incluye
 
-## Qué más hay aquí
+- `FAILURE_MODES.md` - 28 fallos reales que produjeron estas reglas
+- `skill/SKILL.md` - reglas operativas para agentes
+- `check_frozen.py` - protege rutas terminadas
+- `check_scope.py` - límites opcionales por tarea
+- `check_git_policy.py` - encuentra trabajo Git realmente pendiente
+- `check_guardrail_integrity.py` - protege las propias guardrails
+- `doctor.py` - diagnóstico de instalación
 
-**`FAILURE_MODES.md`** contiene los 28 incidentes de los que salieron estos
-gates. Cada uno son cuatro líneas.
+## Lo que no hace
 
+No busca secretos; para eso existen herramientas como gitleaks.
+
+No detecta patrones peligrosos generales; semgrep lo hace mejor.
+
+No sustituye la revisión de código.
+
+No hace que el agente escriba mejor código.
+
+Hace una cosa más estrecha:
+
+> Evita que cambios plausibles, fuera de alcance, sobre código ya correcto se conviertan silenciosamente en commits normales.
+
+## En una línea
+
+No es otro prompt que dice:
+
+```text
+Por favor, no modifiques código existente sin necesidad.
 ```
-Síntoma  cómo se veía
-Causa    por qué pasó
-Arreglo  qué cambió
-Regla    qué hacer a partir de ahora
+
+Es lo que ocurre después de que el agente ignore esa frase:
+
+```text
+commit rejected
 ```
-
-Hay una sola prueba para saber si algo entra en ese archivo: **si no lo escribo,
-¿lo volveré a hacer?** Si la respuesta es sí, entra, aunque no se haya roto nada.
-Lo que se repite rara vez es una caída dramática. Es la misma cosa pequeña con la
-que tropiezas siempre.
-
-**`skill/SKILL.md`** contiene las reglas de operación que lee un agente. Los
-gates solo atrapan lo que se puede comprobar mecánicamente. Esto cubre el resto,
-como informar únicamente de la verificación que realmente ejecutaste.
 
 ## Licencia
 
-MIT. Llévate lo que te sirva.
+MIT. Usa lo que te sirva.
