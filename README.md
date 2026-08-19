@@ -1,55 +1,93 @@
 # agent-guardrails
 
-A small set of no-dependency Python gates for repositories where AI agents
-work on code that is already in production. It protects finished paths,
-declared task scope, and the guardrails themselves.
+Asked an AI coding agent to "just fix the spacing" and came back to 12 changed files?
+
+A helper got renamed. A duplicate was "cleaned up." A retry loop that had been stable for months was simplified. The diff looks reasonable. Tests may even pass.
+
+Then something unrelated breaks later.
+
+`agent-guardrails` is a small Git gate for exactly that problem: **AI agents changing code that was already finished and outside the task.**
+
+Instead of asking the model to remember another sentence in a prompt, it makes the rule executable. If a protected path is changed, the commit is refused.
+
+No dependencies. No model API. Just Python and Git.
 
 [한국어](docs/i18n/README.ko.md) | [Español](docs/i18n/README.es.md) | [Português](docs/i18n/README.pt-BR.md) | [中文](docs/i18n/README.zh-CN.md) | [日本語](docs/i18n/README.ja.md) | [Français](docs/i18n/README.fr.md) | [Deutsch](docs/i18n/README.de.md) | [Русский](docs/i18n/README.ru.md)
 
 ---
 
-## Does this apply to you? Two minutes to find out
+## 30-second test
 
-Ask your agent for one small, contained change. Something like "fix the spacing
-on the settings page." Then, before you read the code:
+Give your agent one small task:
+
+```text
+Fix the spacing on the settings page.
+```
+
+When it finishes:
 
 ```sh
 git diff --stat
 ```
 
-Count the files. If the number is larger than what you asked for, look at the
-extra ones. You will usually find a rename, a refactor, or a cleanup of
-something that was already working.
+If you expected two files and got nine, open the other seven.
 
-That is the problem this tool solves. It is not that the agent wrote bad code.
-It is that it improved something you did not ask it to improve, and you would
-have to notice that in review, every time, forever.
+You will often find changes like:
 
-If the diff only contains what you asked for, you may not need this yet. Come
-back the first time it does not.
+```text
+"Renamed this for clarity."
+"Extracted duplicated logic."
+"Removed code that appeared unused."
+"Updated adjacent code for consistency."
+```
 
-## What problem this solves
+All reasonable. None requested.
 
-When you hand code to an AI agent, the trouble usually does not come from the
-new code it writes. It comes from the code it touches on the way.
+If your diffs already contain only what you asked for, you may not need this yet.
 
-Say you ask it to fix the spacing on the invoice page. It will often tidy up the
-tax calculation sitting right next to it as well. This is not carelessness. The
-agent has no way of knowing why that code looks the way it does, or what it took
-to get there. And a change like that does not look wrong in review. There is no
-test covering it either, because the code was working and nobody thought to
-write one.
+If they do not, keep reading.
 
-You can write "do not touch this file" in your project documentation. It does
-not hold. In the project this came from, that rule sat in the docs for six
-months and was broken constantly, including by agents that had just read the
-sentence, because no code ever checked it.
+## The problem this solves
 
-This tool turns that rule into **something that actually runs**.
+Suppose this file has been boringly correct in production for three months:
+
+```text
+src/billing/charge.py
+```
+
+Today's task is only:
+
+```text
+Adjust invoice page spacing.
+```
+
+The agent does not know why `charge.py` looks slightly strange. It does not know which ugly branch exists because of a real outage six months ago. It sees code, not history.
+
+So people write rules like:
+
+```text
+Do not touch this file.
+```
+
+in `AGENTS.md`, `CLAUDE.md`, prompts, comments, and project docs.
+
+The problem is simple: documentation explains a rule. It does not enforce one.
+
+`agent-guardrails` turns:
+
+```text
+please do not touch this
+```
+
+into:
+
+```text
+commit rejected
+```
 
 ## How it works
 
-You list the finished paths in `frozen.json`.
+Put finished paths in `frozen.json`:
 
 ```json
 {
@@ -57,11 +95,12 @@ You list the finished paths in `frozen.json`.
     {
       "label": "Billing",
       "paths": ["src/billing/charge.py"],
-      "reason": "Finished and running in production. Not on any roadmap.",
+      "reason": "Finished, in production, and not on the roadmap.",
       "what_breaks": "Wrong math still renders a normal screen. Only the amount changes.",
       "before_you_touch": [
-        "Partial refunds are handled in refund.py, not here.",
-        "A failure rolls the whole transaction back. Do not weaken that."
+        "Partial refunds live in refund.py, not here.",
+        "Failures roll back the entire transaction.",
+        "Currency rounding is decided once at the boundary."
       ],
       "how_to_verify": "pytest tests/test_billing.py -q"
     }
@@ -69,158 +108,152 @@ You list the finished paths in `frozen.json`.
 }
 ```
 
-Then you install the pre-commit hook, and any commit that edits those paths is
-refused. When that happens, everything you wrote above is printed in the
-terminal: why it is locked, what breaks if you get it wrong, and what you need to
-know before touching it. It appears **at the moment someone is blocked**, rather
-than sitting in a file nobody opens.
+Install the hook. If an agent changes that path and tries to commit, it gets stopped at the point where the context matters:
 
-Here is what that looks like when an agent tries it.
-
-```
+```text
 $ git commit -m "invoice: tidy up rounding"
 
 frozen: FAIL - a frozen path was changed
   src/billing/charge.py
-      [Billing] Finished and in production. Not on any roadmap.
-      breaks -> Wrong math still renders a normal screen. Only the amount changes.
+      [Billing] Finished and in production.
+      breaks -> Wrong math still renders a normal screen.
+                 Only the amount changes.
         - Partial refunds live in refund.py, not here.
-        - Failure rolls the whole transaction back. Do not weaken that.
-        - Currency rounding is decided once, at the boundary. Not per call site.
+        - Failure rolls the whole transaction back.
+        - Currency rounding is decided once at the boundary.
       verify -> pytest tests/test_billing.py -q
 ```
 
-### If you genuinely need to change it
+The gate is local Python. It does not call an LLM.
 
-Put three lines in the commit message.
+Normal work passes. The extra context appears only when the agent crosses a boundary.
 
-```
-UNFREEZE: src/billing/charge.py - the new payment method needs a branch here
-UNFREEZE-IMPACT: wrong math still renders a normal screen, only the amount changes
-UNFREEZE-ROLLBACK: git revert <sha>, then re-run pytest tests/test_billing.py
-```
+## If the frozen file really must change
 
-If any of the three is missing, the commit is refused.
+Frozen does not mean immutable forever.
 
-Why three lines instead of one? Because a reason only answers "why change this
-now." It does not say what happens if you are wrong, or how anyone gets back to
-where they were. Those two are what actually matter, and those two are exactly
-what gets left out.
-
-**If you cannot write the impact and the rollback, you are not ready to change
-that code yet.** And you find that out now instead of finding it out in
-production. The point is not to make you fill in a form. It is that the judgment
-comes out of writing the three lines.
-
-## Keep one task inside its declared scope
-
-Frozen paths answer "what must not be touched because it is finished." A scope
-file answers "what may be touched for this task." The scope gate is optional so
-existing repositories can adopt it without blocking ordinary commits.
-
-Copy the example for a contained task:
-
-```sh
-mkdir -p .agent-guardrails
-cp examples/scope.json .agent-guardrails/scope.json
-```
-
-Edit `allowed_paths` and `forbidden_paths`, then run the gate before asking for
-review:
-
-```sh
-python scripts/check_scope.py
-python scripts/check_scope.py --json
-```
-
-The pre-commit hook checks the staged diff. CI or a release review can check a
-commit range instead:
-
-```sh
-python scripts/check_scope.py --base origin/main --head HEAD --json
-```
-
-The scope file is task-specific. Keep it local or remove it after the task;
-`ignored_paths` can exclude the scope file itself.
-
-## Protect the guardrails
-
-An agent must not be able to weaken a gate by quietly changing the gate,
-policy, hook, or installer that runs it. `guardrail_policy.json` lists those
-protected paths. A change to one of them must carry all three lines in the same
-commit message:
+A legitimate change needs three commit-message lines:
 
 ```text
-GUARDRAIL-CHANGE: why the guardrail must change now
-GUARDRAIL-IMPACT: what protection is lost if this is wrong
-GUARDRAIL-VERIFY: how the new guardrail was tested
+UNFREEZE: src/billing/charge.py - new payment method needs a branch here
+UNFREEZE-IMPACT: incorrect logic can change charged amounts
+UNFREEZE-ROLLBACK: git revert <sha> then rerun pytest tests/test_billing.py
 ```
 
-The `commit-msg` hook enforces this locally. The workflow example enforces the
-same rule in CI and checks each commit separately, so a later declaration cannot
-legalize an earlier unmarked change.
+Miss one and the commit is refused.
 
-## What gets better
+Why three?
 
-**You stop reading every commit.** Say your agent made 34 commits overnight. Two
-of them carry UNFREEZE lines. Those are the two you read first. The agent did
-not become more careful; it now marks where it went outside the scope you gave
-it.
+Because "why now" is not enough. Before changing proven code, you should also know **what fails if you are wrong** and **how to get back**.
 
-**"Fix the spacing" stops coming back as twelve changed files.** You asked for
-one thing, and the diff also contains a refactor of the tax calculation and a
-cleanup of a retry loop that only exists because an upstream API is unreliable.
-That happens less.
+If you cannot state those two things, the useful discovery is that you do not understand the change well enough yet.
 
-**The load-bearing workaround stops getting tidied up.** Every codebase has a
-line that looks wrong but is holding something together. Every few months
-somebody cleans it up, and later something breaks in a way nobody connects back
-to the cleanup. `before_you_touch` is the warning sign posted at that spot.
+## What changes in practice
 
-**The rule no longer depends on somebody remembering it.** "Do not touch mobile
-layout" is advice. A commit that will not go through is information. The second
-one works at 3am, with a model that has never seen you, in its first minute in
-your repository.
+### Small requests stop turning into giant diffs
 
-## Keep branch and worktree state visible
+```text
+Request:
+fix button spacing
 
-`check_git_policy.py` finds unmerged branches and worktrees that were left
-checked out.
-
-A lingering branch is not the problem in itself. The problem is that **real
-unmerged work gets buried in it**. Agents create branches and worktrees and then
-move on to the next task, so these pile up.
-
-It does not simply list branches. It uses patch equivalence (`git cherry`) to
-tell branches whose content genuinely is not on main apart from branches that
-were already merged through a squash or a rebase. In the project this came from,
-that distinction turned "11 unmerged branches" into "1 that actually matters."
-
-`git_policy.json` can adapt the gate to another repository:
-
-```json
-{
-  "main_refs": ["origin/main", "main", "origin/trunk", "trunk"],
-  "code_extensions": [".py", ".ts", ".go", ".rs"],
-  "unmerged_branch_grace_days": 3,
-  "managed_worktree_prefixes": []
-}
+Unexpected extras:
+rename component
+refactor API helper
+simplify retry loop
+merge type definitions
 ```
 
-`main_ref` remains supported for older configurations. The branch gate fails
-closed when it cannot find any configured main ref.
+Scope drift becomes visible before it lands.
+
+### Weird-looking code keeps its history
+
+Every mature codebase has lines that look wrong but are holding something up.
+
+`before_you_touch` puts the reason next to the failure boundary, exactly when an agent tries to cross it.
+
+### Review gets triaged
+
+If an overnight agent produced 34 commits and two contain `UNFREEZE`, review those two first.
+
+The tool does not make the agent wiser. It makes exceptional changes identify themselves.
+
+### Models can change; the rule stays
+
+Claude today, Codex tomorrow, Gemini next week. The enforcement is in Git, not in model memory.
+
+## Does it save tokens?
+
+The gates themselves use **zero LLM tokens**. They are local Python scripts:
+
+```sh
+python scripts/check_frozen.py
+python scripts/check_git_policy.py
+python scripts/check_scope.py
+```
+
+What they can reduce is the expensive part around a bad change:
+
+- unnecessary file exploration
+- out-of-scope refactors
+- code generation for those refactors
+- extra tests
+- regression diagnosis
+- rollback work
+- doing the task again
+
+There is intentionally no "saves 37%" benchmark here. That number would depend on how often your agents drift out of scope.
+
+This is not a token optimizer. It prevents work that never needed to exist.
+
+## Optional task scope
+
+`check_scope.py` can restrict a task to allowed paths.
+
+For example:
+
+```text
+Task: settings page spacing
+
+Allowed:
+frontend/settings/**
+frontend/styles/settings.css
+
+Forbidden:
+backend/**
+database/**
+billing/**
+```
+
+Scope is opt-in. No scope file means the check is inactive.
+
+## It also catches abandoned Git work
+
+AI agents create branches and worktrees, then move on.
+
+`check_git_policy.py` does not merely count branches. It uses patch equivalence (`git cherry`) to distinguish work that is genuinely missing from `main` from work already landed through squash or rebase.
+
+In the project this came from, that distinction turned "11 unmerged branches" into "1 branch with work that actually matters."
 
 ## Where this came from
 
-It came out of a real project where AI agents wrote production code for months.
-Along the way the live site broke 60 times. Each time, what happened and what to
-do differently got written down, and the rules that could be turned into code
-became these gates.
+This was not designed from a clean-room theory of agent safety.
 
-This repository ships the portable guardrails that apply outside that project,
-along with the 29 incidents behind them. Those are in `FAILURE_MODES.md`.
+It came from months of AI agents working on a real production codebase. Production broke 60 times. Each time, the incident was recorded as:
+
+```text
+Symptom   what it looked like
+Cause     why it happened
+Fix       what changed
+Rule      what to do next time
+```
+
+The rules that could be enforced mechanically became these gates.
+
+The repository includes 28 of those failure records in `FAILURE_MODES.md`.
 
 ## Install
+
+Linux / macOS:
 
 ```sh
 git clone https://github.com/produckyou-design/agent-guardrails
@@ -230,92 +263,113 @@ git clone https://github.com/produckyou-design/agent-guardrails
 Windows:
 
 ```powershell
+git clone https://github.com/produckyou-design/agent-guardrails
 .\agent-guardrails\install.ps1 C:\path\to\your-repo
 ```
 
-To do it by hand, copy `gates/*.py` into your project's `scripts/`, put
-`hooks/pre-commit` and `hooks/commit-msg` in `.git/hooks/`, copy
-`examples/guardrail_policy.json` to the repository root, and copy
-`examples/workflow.yml` into `.github/workflows/`.
-
-After installation, run the read-only diagnostic:
+Then diagnose the installation:
 
 ```sh
 python scripts/doctor.py
 python scripts/doctor.py --json
 ```
 
-It checks the installed gates, configuration files, hooks, and whether CI
-contains the guardrail-integrity check. An absent task scope is reported as
-`INFO`, because scope is intentionally opt-in.
+The local hook can be bypassed with `--no-verify`; CI cannot. Using both is recommended.
 
-A local hook can be skipped with `--no-verify`, but the CI job cannot. It is
-worth having both.
+## Start empty
 
-**Start with an empty frozen list.** Add the first path on the day an agent edits
-a file you thought was finished.
+Do not freeze the whole repository.
 
-## Do not freeze everything
+Start with:
 
-If the freeze covers the whole repository, the gate goes off constantly, and
-then real violations get ignored along with the noise. Leave the paths you are
-about to work on open.
+```json
+{
+  "frozen": []
+}
+```
 
-The project this came from keeps 19 paths frozen out of several hundred.
+The first time an agent "helpfully" edits code that was already done, add that path.
 
-## What this tool does not do
+A gate that fires constantly becomes noise. Protect only the code that is actually finished and expensive to disturb.
 
-**It does not measure how much anything improves.** There is no benchmark table
-in this README because there is no honest way to produce one.
+The original project uses a small frozen set out of hundreds of paths.
 
-**It does not scan for secrets or unsafe code patterns.** gitleaks and semgrep
-do that far better. This tool covers a problem they do not.
+## Staging discipline
 
-**It does not make the agent write better code.** It only makes a wrong change
-visible before it ships.
+The agent operating rules also reject broad staging habits such as:
 
-**It does not replace code review.** It filters out the one thing review is
-worst at catching: a small, plausible edit to code that was already correct.
+```sh
+git add -A
+git add .
+git add -u
+```
+
+Prefer naming the files you own:
+
+```sh
+git add src/thing.py tests/test_thing.py
+```
+
+An agent cannot safely assume every change in a shared working tree belongs to it.
+
+## Verification means execution
+
+`skill/SKILL.md` covers rules that cannot be enforced purely from a diff.
+
+Reading code and saying "this should work" is not verification.
+
+If a command was not run, report `NOT_RUN`. If it failed, report the failure. For visible changes, inspect the actual rendered result before calling the task done.
 
 ## Tests
 
 ```sh
-python -m unittest discover tests -v
+python tests/test_gates.py
 ```
 
-The tests create real git repositories in temporary directories, make real
-commits, and run the gates as separate processes. Nothing is mocked,
-because what is being tested is how the gates read git.
+There are 16 tests. They create real temporary Git repositories, make real commits, and run the gates as separate processes instead of mocking Git behavior.
 
-Bugs that were learned the expensive way are in there too. For example,
-declaring `src/db/sync-notices.py` used to silently unlock
-`src/db/sync_orders.py`, because a regular expression was eating the hyphen.
+Bugs found in the gates themselves are kept as regression tests too.
 
-A repository arguing that verification has to be executable should be able to
-demonstrate its own. Loosen the three-line rule and 3 tests fail. Break the
-hyphen handling and the path test fails. Try it yourself.
+If a project claims rules should be executable, its own rules should be executable first.
 
-## What else is here
+## Included
 
-**`FAILURE_MODES.md`** contains the 28 incidents these gates came from. Each one
-is four lines.
+- `FAILURE_MODES.md` - 28 real failure records that produced these rules.
+- `skill/SKILL.md` - operating rules for agents working in a guarded repository.
+- `check_frozen.py` - protects finished paths.
+- `check_scope.py` - optional task-level path boundaries.
+- `check_git_policy.py` - finds meaningful unmerged Git work.
+- `check_guardrail_integrity.py` - protects the guardrails themselves.
+- `doctor.py` - read-only installation diagnostics.
 
+## What this does not do
+
+It does not scan secrets; use tools such as gitleaks.
+
+It does not detect general dangerous code patterns; use tools such as semgrep.
+
+It does not replace code review.
+
+It does not make an AI agent write better code.
+
+It does one narrower thing:
+
+> It stops plausible, out-of-scope edits to already-correct code from quietly becoming normal commits.
+
+## One-line version
+
+This is not another prompt that says:
+
+```text
+Please do not modify existing code unnecessarily.
 ```
-Symptom   what it looked like
-Cause     why it happened
-Fix       what changed
-Rule      what to do from now on
+
+It is what happens after the agent ignores that sentence:
+
+```text
+commit rejected
 ```
-
-There is one test for whether something belongs in that file: **if I do not
-write this down, will I do it again?** If the answer is yes, it goes in, even
-when nothing broke. What repeats is rarely a dramatic outage. It is the same
-small thing you trip over every time.
-
-**`skill/SKILL.md`** holds the operating rules an agent reads. The gates only
-catch what can be checked mechanically. This covers the rest, such as reporting
-only the verification you actually ran.
 
 ## License
 
-MIT. Take whatever is useful.
+MIT. Take what is useful.
