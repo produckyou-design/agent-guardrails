@@ -165,7 +165,38 @@ def _load_policy(ref: str | None) -> list[str]:
     return [_normalise(path) for path in paths]
 
 
+# Local hardening from the origin project (2026-08-20). The commit-message
+# file git hands the hook is the *uncleaned* template: comment lines, and with
+# `git commit -v` the whole verbose diff below the scissors line. Measured:
+#
+#     $ git commit -v            (file content already holds the markers)
+#     ...
+#     # ------------------------ >8 ------------------------
+#      GUARDRAIL-CHANGE: ...        <- diff *context* line, one leading space
+#
+# `^\s*MARKER:` matches that leading space, so committing a file that merely
+# contains the marker text would satisfy the gate without anyone declaring
+# anything. guardrail_policy.json itself carries the marker strings, which
+# makes the protected file the easiest carrier. Strip what git itself strips
+# before the message is stored: everything from the scissors line down, and
+# every `#` comment line. The range-based path is unaffected (rev-list +
+# show %B are already cleaned) -- this only fixes the hook path.
+_SCISSORS_RE = re.compile(r"^\s*#\s*-+\s*>8\s*-+\s*$")
+
+
+def _clean_commit_message(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines():
+        if _SCISSORS_RE.match(line):
+            break
+        if line.startswith("#"):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _missing_markers(message: str) -> list[str]:
+    message = _clean_commit_message(message)
     return [
         marker for marker in MARKERS
         if not re.search(rf"^\s*{re.escape(marker)}:\s*\S.{{3,}}\s*$", message, re.MULTILINE)

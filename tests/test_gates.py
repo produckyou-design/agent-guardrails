@@ -222,6 +222,102 @@ class TestFrozen(GateTestCase):
         self.assertEqual(payload["status"], "PASS")
 
 
+class TestFrozenStaged(GateTestCase):
+    """The hook path: judge the index BEFORE the commit is created.
+
+    The range-based gate wired into pre-commit with its default HEAD~1..HEAD
+    examines the previous commit - measured 2026-08-20: the violating commit
+    passed, the next innocent commit got blocked.
+    """
+
+    def stage(self, path: str, body: str) -> None:
+        write(self.repo / path, body)
+        r = git(self.repo, "add", path)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def message_file(self, text: str) -> Path:
+        f = self.tmp / "commit-message.txt"
+        write(f, text)
+        return f
+
+    def test_staged_frozen_change_without_declaration_fails(self):
+        self.stage("src/billing/charge.py", "def charge():\n    return 11\n")
+        r = run_gate(self.repo, "check_frozen.py", "--staged")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("frozen: FAIL", r.stdout)
+
+    def test_staged_free_change_passes_quietly_in_brief_mode(self):
+        self.stage("src/other.py", "x = 12\n")
+        r = run_gate(self.repo, "check_frozen.py", "--staged", "--brief")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+
+    def test_staged_with_three_lines_passes(self):
+        self.stage("src/billing/charge.py", "def charge():\n    return 13\n")
+        msg = self.message_file(
+            "billing: new method\n\n"
+            "UNFREEZE: src/billing/charge.py - new payment method needs a branch\n"
+            "UNFREEZE-IMPACT: wrong math renders a normal screen, only amounts change\n"
+            "UNFREEZE-ROLLBACK: git revert HEAD, re-run pytest tests/test_billing.py\n"
+        )
+        r = run_gate(self.repo, "check_frozen.py", "--staged", "--message-file", str(msg))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("allowed by UNFREEZE", r.stdout)
+
+    def test_declaration_below_scissors_line_does_not_count(self):
+        # With `git commit -v` the message file holds the verbose diff below
+        # the scissors line. A diff CONTEXT line carrying UNFREEZE text used to
+        # be read as a declaration: `^\s*UNFREEZE:` swallows the context line's
+        # leading space. Committing a file that merely contains that string
+        # would have unlocked itself.
+        self.stage("src/billing/charge.py", "def charge():\n    return 14\n")
+        msg = self.message_file(
+            "billing: new method\n\n"
+            "# ------------------------ >8 ------------------------\n"
+            " UNFREEZE: src/billing/charge.py - a context line from the diff\n"
+            " UNFREEZE-IMPACT: context lines from the verbose diff\n"
+            " UNFREEZE-ROLLBACK: git revert HEAD\n"
+        )
+        r = run_gate(self.repo, "check_frozen.py", "--staged", "--message-file", str(msg))
+        self.assertEqual(r.returncode, 1, "declaration below the scissors line must not count\n"
+                                           + r.stdout + r.stderr)
+
+    def test_declaration_in_comment_line_does_not_count(self):
+        self.stage("src/billing/charge.py", "def charge():\n    return 15\n")
+        msg = self.message_file(
+            "billing: new method\n\n"
+            "# UNFREEZE: src/billing/charge.py - inside a comment line\n"
+            "# UNFREEZE-IMPACT: inside a comment line\n"
+            "# UNFREEZE-ROLLBACK: git revert HEAD\n"
+        )
+        r = run_gate(self.repo, "check_frozen.py", "--staged", "--message-file", str(msg))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+
+    def test_renaming_a_frozen_file_is_caught(self):
+        # --no-renames keeps the OLD path in the staged list. Folding renames
+        # away would let a frozen file escape the freeze under a new name.
+        r = git(self.repo, "mv", "src/billing/charge.py", "src/billing/charge2.py")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = run_gate(self.repo, "check_frozen.py", "--staged")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("src/billing/charge.py", r.stdout)
+
+    def test_brief_output_is_short_and_advisory_only(self):
+        # Brief is the pre-commit notice. It names paths but does not dump the
+        # full explanation - that prints once, where the verdict happens.
+        self.stage("src/billing/charge.py", "def charge():\n    return 16\n")
+        r = run_gate(self.repo, "check_frozen.py", "--staged", "--brief")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("src/billing/charge.py", r.stdout)
+        self.assertNotIn("Wrong math still renders a normal screen", r.stdout)
+
+    def test_message_file_without_staged_is_an_error(self):
+        msg = self.message_file("just a message\n")
+        r = run_gate(self.repo, "check_frozen.py", "--message-file", str(msg))
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("--staged", r.stdout + r.stderr)
+
+
 class TestGitPolicy(GateTestCase):
     def test_clean_repo_passes(self):
         r = run_gate(self.repo, "check_git_policy.py")

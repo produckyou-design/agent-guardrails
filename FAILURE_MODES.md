@@ -351,3 +351,46 @@ that contained the installed script.
 
 **Rule** An installed diagnostic must derive its default target from its own
 location, not from the shell directory that happened to invoke it.
+
+## 30. The hook checked the previous commit, so the violating commit passed
+
+**Symptom** A frozen file was committed without any UNFREEZE declaration. The
+pre-commit hook was installed and ran the frozen gate on every commit - and
+still let it through. The next commit, which touched nothing frozen, got
+blocked instead.
+
+**Cause** The pre-commit hook called `check_frozen.py` with no arguments. The
+gate's default range is `HEAD~1..HEAD`: a range of commits that already exist.
+At pre-commit time the current commit does not exist yet, so the gate examined
+the previous one. Measured in the origin project on 2026-08-20.
+
+**Fix** Split by what each hook can actually see. pre-commit judges what needs
+no message (hook integrity, task scope) plus an advisory `--staged --brief`
+notice; commit-msg runs `check_frozen.py --staged --message-file`, where the
+message - and with it the declaration - exists.
+
+**Rule** Wire a gate to the moment its inputs exist. A verdict that needs the
+commit message cannot happen before there is one, and a staged check that runs
+against an existing range checks history, not this change.
+
+## 31. Diff context lines were read as declarations
+
+**Symptom** Committing a file whose content merely contained the marker strings
+(`UNFREEZE: ...`, `GUARDRAIL-CHANGE: ...`) passed both message gates, although
+nobody had declared anything in the commit message.
+
+**Cause** With `git commit -v`, git hands the commit-msg hook the uncleaned
+message file: comment lines, then the whole verbose diff below the scissors
+line (`# ------------------------ >8 ------------------------`). Diff context
+lines carry one leading space, and `^\s*MARKER:` matches that space. The
+protected policy file itself contains marker names, making it the easiest
+carrier. Measured in the origin project on 2026-08-20.
+
+**Fix** Both gates strip exactly what git strips before storing the message:
+everything from the scissors line down, and every `#` comment line. Range-based
+checks read `git log %B`, which is already cleaned - only the hook path needed
+the fix.
+
+**Rule** Parse input the way the receiver will store it, not the way it is
+handed over. Anything a gate reads raw from a template or a diff can be planted,
+and a rule that can be satisfied by planting text protects nothing.

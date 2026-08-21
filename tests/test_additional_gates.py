@@ -161,6 +161,34 @@ class TestGuardrailIntegrity(RepoCase):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_markers_below_scissors_line_do_not_count(self):
+        # With `git commit -v` the message file holds the verbose diff below
+        # the scissors line. A diff context line carrying GUARDRAIL text used
+        # to be read as a declaration, so committing a file that merely
+        # contains the marker strings would satisfy this gate.
+        self.configure_policy()
+        write(self.repo / "guardrail_policy.json", json.dumps({
+            "version": 1,
+            "protected_paths": ["scripts/check_frozen.py", "guardrail_policy.json"],
+            "_markers_note": "GUARDRAIL-CHANGE GUARDRAIL-IMPACT GUARDRAIL-VERIFY",
+        }))
+        git(self.repo, "add", "guardrail_policy.json")
+        message = self.tmp / "message.txt"
+        write(
+            message,
+            "policy: note the marker names\n\n"
+            "# ------------------------ >8 ------------------------\n"
+            " GUARDRAIL-CHANGE: a context line from the verbose diff\n"
+            " GUARDRAIL-IMPACT: a context line from the verbose diff\n"
+            " GUARDRAIL-VERIFY: a context line from the verbose diff\n",
+        )
+
+        result = run_gate(self.repo, "check_guardrail_integrity.py", "--message-file", str(message))
+
+        self.assertEqual(result.returncode, 1,
+                         "markers below the scissors line must not count\n"
+                         + result.stdout + result.stderr)
+
     def test_later_markers_do_not_backdate_guardrail_change(self):
         self.configure_policy()
         write(self.repo / "scripts" / "check_frozen.py", "print('changed')\n")
@@ -207,7 +235,7 @@ class TestDoctor(RepoCase):
         hooks = self.repo / ".git" / "hooks"
         hooks.mkdir(parents=True, exist_ok=True)
         write(hooks / "pre-commit", "#!/bin/sh\ncheck_frozen.py check_git_policy.py check_scope.py\n")
-        write(hooks / "commit-msg", "#!/bin/sh\ncheck_guardrail_integrity.py\n")
+        write(hooks / "commit-msg", "#!/bin/sh\ncheck_frozen.py check_guardrail_integrity.py\n")
         self.commit_all("installed", no_verify=True)
 
         result = run_gate(self.repo, "doctor.py", "--json")

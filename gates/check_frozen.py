@@ -35,6 +35,7 @@ Usage
     python scripts/check_frozen.py --base <commit> --head <commit>
     python scripts/check_frozen.py            # HEAD~1..HEAD
     python scripts/check_frozen.py --list     # print the frozen list and exit
+    python scripts/check_frozen.py --staged --message-file <file>   # git hooks
 """
 
 from __future__ import annotations
@@ -214,6 +215,156 @@ def _covers(target: str, path: str, label: str) -> bool:
     return target == path or target == label or bool(target and target in path)
 
 
+# ---------------------------------------------------------------------------
+# Staged check - judged BEFORE the commit is created.
+#
+# Why this is separate from check(): check() inspects an already-created
+# commit range (base..head). Wired into pre-commit with its default
+# HEAD~1..HEAD, it examines the PREVIOUS commit, not the one being made now -
+# measured in the origin project on 2026-08-20: the violating commit passed,
+# and the next innocent commit got blocked instead.
+#
+# The UNFREEZE declaration lives in the commit message, which only exists
+# once commit-msg runs. So the verdict belongs to commit-msg; this staged
+# mode is what commit-msg calls. Blocking here without a message would
+# reject legitimate UNFREEZE commits as false positives.
+# ---------------------------------------------------------------------------
+
+# The commit-message file git hands to the hook is not yet cleaned. It holds
+# `#` comment lines and, with `git commit -v`, the whole verbose diff below
+# the scissors line. Measured 2026-08-20:
+#
+#     # ------------------------ >8 ------------------------
+#      UNFREEZE: src/billing/charge.py - (context line from the diff)
+#
+# Diff context lines carry one leading space, and `^\s*UNFREEZE:` swallows
+# that space - so committing a file that merely CONTAINS such a line would
+# count as a declaration. Strip what git itself strips before storing:
+# everything from the scissors line down, and every `#` comment line. Range
+# checks read `git log %B`, already cleaned - this only fixes the hook path.
+_SCISSORS_RE = re.compile(r"^\s*#\s*-+\s*>8\s*-+\s*$")
+
+
+def clean_commit_message(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines():
+        if _SCISSORS_RE.match(line):
+            break
+        if line.startswith("#"):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def staged_files(cwd: Path = BASE_DIR) -> list[str]:
+    """Paths in the index.
+
+    Uses --no-renames. Folding a rename into a rename record drops the old
+    path - moving a frozen file under a different name IS touching that file,
+    and without this a rename alone would escape the freeze.
+    """
+    out = _git(["diff", "--cached", "--name-only", "--no-renames",
+                "--diff-filter=ACDMRTUXB"], cwd)
+    return [l.strip() for l in out.splitlines() if l.strip()]
+
+
+def check_staged(message_file: Path | None, cwd: Path = BASE_DIR,
+                 brief: bool = False) -> int:
+    entries = load_manifest()
+    if not entries:
+        print("frozen: PASS (nothing frozen)")
+        return 0
+
+    index = frozen_index(entries)
+    changed = staged_files(cwd)
+    hits = match_frozen(changed, index)
+    if not hits:
+        # brief mode is the pre-commit early notice. With no conflict it says
+        # nothing - the same PASS line printed by both hooks is noise, and
+        # noise drowns real warnings.
+        if not brief:
+            print(f"frozen: PASS ({len(index)} frozen paths, {len(changed)} files staged, 0 hits)")
+        return 0
+
+    message = ""
+    if message_file is not None:
+        try:
+            message = clean_commit_message(
+                message_file.read_text(encoding="utf-8", errors="replace"))
+        except OSError as e:
+            # A gate refuses when it cannot know. An unreadable message is
+            # not "no declaration was found"; report it and fail.
+            print(f"frozen: ERROR - cannot read the commit message: {e!r}", file=sys.stderr)
+            return 2
+
+    decls = unfreeze_targets(message)
+
+    unresolved = []
+    granted = []
+    for path, entry in hits:
+        label = entry.get("label", "")
+        hit = next(((t, why) for (t, why) in decls if _covers(t, path, label)), None)
+        if hit:
+            granted.append(hit)
+        else:
+            unresolved.append((path, entry))
+
+    if not unresolved:
+        print(f"frozen: PASS ({len(hits)} staged hit(s), allowed by UNFREEZE)")
+        for t, why in granted:
+            print(f"  unfrozen {t} - {why}")
+        return 0
+
+    if brief:
+        # Pre-commit early notice only. The full explanation prints exactly
+        # once, where the verdict happens (commit-msg). A block that dumps
+        # the same 40 lines twice gets skipped unread, and an unread gate
+        # ends up bypassed with --no-verify.
+        print("frozen: frozen paths are staged - UNFREEZE lines are required")
+        for path, entry in unresolved:
+            print(f"  {path}   [{entry.get('label')}]")
+        return 1
+
+    print("frozen: FAIL - a frozen path is staged without an UNFREEZE declaration")
+    seen = set()
+    for path, entry in unresolved:
+        print(f"  {path}")
+        label = entry.get("label")
+        if label in seen:
+            continue
+        seen.add(label)
+        print(f"      [{label}] {entry.get('reason')}")
+        if entry.get("what_breaks"):
+            print(f"      breaks -> {entry['what_breaks']}")
+        for note in entry.get("before_you_touch") or []:
+            print(f"        - {note}")
+        if entry.get("how_to_verify"):
+            print(f"      verify -> {entry['how_to_verify']}")
+    print()
+    if granted:
+        print("  UNFREEZE declarations read in this message, none matching the paths above:")
+        for t, _ in granted:
+            print(f"      {t}")
+        print("  A target must equal one of the paths above, be part of it, or be a")
+        print("  label from frozen.json. List several with commas.")
+        print()
+    print("  Put these three lines in the commit message. Miss one and it does")
+    print("  not count as a declaration.")
+    print("      UNFREEZE: <path or label> - why this has to change now")
+    print("      UNFREEZE-IMPACT: what breaks, and how, if this is wrong")
+    print("      UNFREEZE-ROLLBACK: how to undo it, with the command if possible")
+    print("  List several paths on the first line with commas (a.py, b.py - reason).")
+    print()
+    print("  If you cannot write IMPACT and ROLLBACK, you are not ready to unlock")
+    print("  it. Run how_to_verify from frozen.json first (printed above).")
+    print()
+    print("  What is blocked is THIS commit. Nothing was committed; the stage is")
+    print("  intact. Add the three lines and commit again.")
+    print("  Do not use UNFREEZE-LATE here - that marker discloses an already")
+    print("  pushed past commit, while this one can still be fixed.")
+    return 1
+
+
 def check(base: str | None, head: str, cwd: Path = BASE_DIR) -> int:
     entries = load_manifest()
     if not entries:
@@ -339,6 +490,8 @@ def _run(args: argparse.Namespace) -> int:
         return 0
 
     try:
+        if args.staged:
+            return check_staged(args.message_file, brief=args.brief)
         return check(args.base, args.head)
     except Exception as e:  # noqa: BLE001 - a gate fails loudly, with the cause
         print(f"frozen: ERROR — {e!r}", file=sys.stderr)
@@ -350,8 +503,21 @@ def main() -> int:
     ap.add_argument("--base", default=None, help="base commit to compare against (default: <head>~1)")
     ap.add_argument("--head", default="HEAD", help="commit to check (default: HEAD)")
     ap.add_argument("--list", action="store_true", help="print the frozen list and exit")
+    ap.add_argument("--staged", action="store_true",
+                    help="check the index before the commit is created (for git hooks)")
+    ap.add_argument("--message-file", type=Path, default=None,
+                    help="commit message file handed over by the commit-msg hook (with --staged)")
+    ap.add_argument("--brief", action="store_true",
+                    help="print only the conflicting paths (pre-commit early notice)")
     ap.add_argument("--json", action="store_true", help="emit one machine-readable JSON result")
     args = ap.parse_args()
+
+    if args.message_file is not None and not args.staged:
+        # A message file only means something for a staged check. Ignoring it
+        # silently would look like "the declaration was probably read" - a
+        # gate refuses when it cannot know.
+        print("frozen: ERROR - --message-file is used together with --staged", file=sys.stderr)
+        return 2
 
     if not args.json:
         return _run(args)

@@ -89,7 +89,9 @@ def inspect_repo(repo: Path) -> dict[str, object]:
     hooks = _git_hooks(repo)
     for name, required_text in (
         ("pre-commit", ("check_frozen.py", "check_git_policy.py", "check_scope.py")),
-        ("commit-msg", ("check_guardrail_integrity.py",)),
+        # The frozen verdict lives in commit-msg: UNFREEZE declarations are
+        # read from the message file, which only exists at that point.
+        ("commit-msg", ("check_frozen.py", "check_guardrail_integrity.py")),
     ):
         path = hooks / name
         if not path.is_file():

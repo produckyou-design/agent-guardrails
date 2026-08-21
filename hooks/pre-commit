@@ -5,10 +5,89 @@
 #   cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 #
 # A rule nothing enforces is not a rule. This is where enforcement happens.
+#
+# Role split - what is judged here, and what in commit-msg
+# --------------------------------------------------------
+#   pre-commit   judgeable without a commit message:  hook integrity, scope
+#   commit-msg   requires the commit message:         frozen (UNFREEZE), guardrail
+#
+# The frozen verdict does NOT happen here: UNFREEZE declarations live in the
+# commit message, which does not exist yet at this point. Blocking on frozen
+# paths here would reject legitimate UNFREEZE commits as false positives.
+# Instead this hook prints an early notice (check_frozen --staged --brief).
 
-set -e
-PY=${PYTHON:-python}
+ROOT=$(git rev-parse --show-toplevel) || exit 1
+cd "$ROOT" || exit 1
 
-$PY scripts/check_frozen.py
-$PY scripts/check_git_policy.py
-$PY scripts/check_scope.py
+PYTHONIOENCODING=utf-8
+export PYTHONIOENCODING
+
+# Find python - refuse to pass when it cannot be found. Being unable to run
+# the gates is not "no violation".
+PY=""
+for c in "$PYTHON" python python3; do
+    [ -n "$c" ] || continue
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c "import sys" >/dev/null 2>&1; then
+        PY="$c"; break
+    fi
+done
+if [ -z "$PY" ] && command -v py >/dev/null 2>&1 && py -3 -c "import sys" >/dev/null 2>&1; then
+    PY="py -3"
+fi
+if [ -z "$PY" ]; then
+    echo "guardrails: FAIL - no python found, cannot run the gates." >&2
+    echo "  Not being able to run a gate is not a pass. Re-run as:" >&2
+    echo "      PYTHON=/path/to/python git commit ..." >&2
+    exit 1
+fi
+
+FAIL=0
+
+# 1. Hook integrity (mutual check). .git/hooks is not tracked by git, so the
+# policy diff check never sees the hooks themselves. The two hooks therefore
+# verify each other's existence and wiring: deleting one leaves the other
+# refusing commits.
+HOOKS=$(git rev-parse --git-path hooks)
+if [ ! -f "$HOOKS/commit-msg" ]; then
+    echo "guardrails: FAIL - $HOOKS/commit-msg is missing." >&2
+    echo "  The frozen (UNFREEZE) and guardrail verdicts happen there. Without it," >&2
+    echo "  frozen files can be committed without any declaration." >&2
+    FAIL=1
+elif ! grep -q "check_frozen.py" "$HOOKS/commit-msg" || \
+     ! grep -q "check_guardrail_integrity.py" "$HOOKS/commit-msg"; then
+    echo "guardrails: FAIL - commit-msg exists but does not call the gates." >&2
+    echo "  The file is there and the wiring is gone." >&2
+    FAIL=1
+fi
+
+# 2. Task scope - inactive unless configured. With no .agent-guardrails/scope.json
+# the gate prints INACTIVE and passes (that is "not configured", not a hidden PASS).
+if [ -f scripts/check_scope.py ]; then
+    $PY scripts/check_scope.py --staged || FAIL=1
+fi
+
+# 3. Git policy - notice only, do not block. Stale branches (§4) and stray
+# worktrees (§5) are properties of the repository, not of this commit.
+# Blocking commits over something this commit cannot fix trains everyone to
+# use --no-verify - which turns off the frozen check too.
+if [ -f scripts/check_git_policy.py ]; then
+    if ! $PY scripts/check_git_policy.py; then
+        echo "  - notice only; this commit is not blocked. Fix it before release." >&2
+    fi
+fi
+
+# 4. Frozen early notice - short, advisory. The full explanation prints once,
+# in commit-msg, where the verdict happens. Dumping it twice turns one block
+# into two screens nobody reads.
+if [ -f scripts/check_frozen.py ]; then
+    if ! $PY scripts/check_frozen.py --staged --brief; then
+        echo "  - not blocked here yet; without the three lines, commit-msg will reject." >&2
+    fi
+fi
+
+if [ "$FAIL" -ne 0 ]; then
+    echo "" >&2
+    echo "guardrails: commit rejected (pre-commit)." >&2
+    exit 1
+fi
+exit 0

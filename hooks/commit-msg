@@ -1,9 +1,82 @@
 #!/bin/sh
 # agent-guardrails commit-msg hook
 #
-# Guardrail code and policy changes need explicit impact and verification.
+# This is where commits are actually refused. Both verdicts need the commit
+# message, so neither can happen in pre-commit:
+#
+#   check_frozen.py --staged --message-file    frozen paths + UNFREEZE lines
+#   check_guardrail_integrity.py --message-file  guardrail weakening + GUARDRAIL lines
+#
+# Why the frozen verdict lives here and not in pre-commit: an older wiring ran
+# `python scripts/check_frozen.py` with no arguments in pre-commit. The default
+# range is HEAD~1..HEAD - the PREVIOUS commit, not the one being made now.
+# Measured 2026-08-20 in the origin project: the violating commit itself passed,
+# and the next innocent commit got blocked instead.
 
-set -e
-PY=${PYTHON:-python}
+ROOT=$(git rev-parse --show-toplevel) || exit 1
+MSG_FILE=$1
+case "$MSG_FILE" in
+    /*|[A-Za-z]:*) : ;;
+    *) MSG_FILE="$(pwd)/$MSG_FILE" ;;
+esac
+cd "$ROOT" || exit 1
 
-$PY scripts/check_guardrail_integrity.py --message-file "$1"
+PYTHONIOENCODING=utf-8
+export PYTHONIOENCODING
+
+PY=""
+for c in "$PYTHON" python python3; do
+    [ -n "$c" ] || continue
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c "import sys" >/dev/null 2>&1; then
+        PY="$c"; break
+    fi
+done
+if [ -z "$PY" ] && command -v py >/dev/null 2>&1 && py -3 -c "import sys" >/dev/null 2>&1; then
+    PY="py -3"
+fi
+if [ -z "$PY" ]; then
+    echo "guardrails: FAIL - no python found, cannot run the gates." >&2
+    echo "      PYTHON=/path/to/python git commit ..." >&2
+    exit 1
+fi
+
+FAIL=0
+
+# Hook integrity (mutual check).
+HOOKS=$(git rev-parse --git-path hooks)
+if [ ! -f "$HOOKS/pre-commit" ]; then
+    echo "guardrails: FAIL - $HOOKS/pre-commit is missing." >&2
+    FAIL=1
+elif ! grep -q "check_scope.py" "$HOOKS/pre-commit"; then
+    echo "guardrails: FAIL - pre-commit exists but does not call the gates." >&2
+    FAIL=1
+fi
+
+# Skip merge commits. Merge contents were already judged commit by commit.
+# Blocking merges switches the hook off entirely (direct edits slip through
+# too); the protection gained is a duplicate of what was already given.
+# Skipping is printed, not silent.
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    echo "guardrails: SKIP - merge commit (frozen/guardrail verdicts skipped)."
+    echo "  Incoming changes were already judged per commit."
+    [ "$FAIL" -ne 0 ] && exit 1
+    exit 0
+fi
+
+# Frozen paths (UNFREEZE three lines) - judged on the staged diff.
+if [ -f scripts/check_frozen.py ]; then
+    $PY scripts/check_frozen.py --staged --message-file "$MSG_FILE" || FAIL=1
+fi
+
+# The gates themselves (GUARDRAIL three lines).
+if [ -f scripts/check_guardrail_integrity.py ]; then
+    $PY scripts/check_guardrail_integrity.py --message-file "$MSG_FILE" || FAIL=1
+fi
+
+if [ "$FAIL" -ne 0 ]; then
+    echo "" >&2
+    echo "guardrails: commit rejected (commit-msg). Nothing was committed." >&2
+    echo "  Fix the message and commit again - the stage is intact." >&2
+    exit 1
+fi
+exit 0

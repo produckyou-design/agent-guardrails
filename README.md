@@ -128,6 +128,21 @@ The gate is local Python. It does not call an LLM.
 
 Normal work passes. The extra context appears only when the agent crosses a boundary.
 
+### The two hooks split the work
+
+```text
+pre-commit   judgeable without a commit message:  hook integrity, task scope
+commit-msg   requires the commit message:         frozen (UNFREEZE), guardrail
+```
+
+An earlier wiring ran `python scripts/check_frozen.py` with no arguments in pre-commit. Its default range is `HEAD~1..HEAD` - the **previous** commit, not the one being made. Measured in the origin project on 2026-08-20: the violating commit passed, and the next innocent commit got blocked instead.
+
+So the frozen verdict runs in commit-msg, where the message - and with it the UNFREEZE declaration - actually exists. pre-commit keeps what needs no message: it verifies both hooks are present and wired (deleting one leaves the other refusing commits), checks the optional task scope, prints an early notice about staged frozen paths, and reports git-policy findings as a notice only.
+
+Merge commits skip the frozen and guardrail verdicts - their contents were already judged commit by commit, and blocking merges trains everyone into `--no-verify`, which switches the whole gate off.
+
+Both hooks fail closed when python cannot be found: not being able to run a gate is not a pass.
+
 ## If the frozen file really must change
 
 Frozen does not mean immutable forever.
@@ -324,19 +339,20 @@ If a command was not run, report `NOT_RUN`. If it failed, report the failure. Fo
 
 ```sh
 python tests/test_gates.py
+python tests/test_additional_gates.py
 ```
 
-There are 16 tests. They create real temporary Git repositories, make real commits, and run the gates as separate processes instead of mocking Git behavior.
+There are 35 tests. They create real temporary Git repositories, make real commits, and run the gates as separate processes instead of mocking Git behavior.
 
-Bugs found in the gates themselves are kept as regression tests too.
+Bugs found in the gates themselves are kept as regression tests too - including the pre-commit wiring that examined the previous commit instead of the staged one, and the `git commit -v` verbose diff whose context lines could be read as UNFREEZE or GUARDRAIL declarations.
 
 If a project claims rules should be executable, its own rules should be executable first.
 
 ## Included
 
-- `FAILURE_MODES.md` - 28 real failure records that produced these rules.
+- `FAILURE_MODES.md` - real failure records that produced these rules.
 - `skill/SKILL.md` - operating rules for agents working in a guarded repository.
-- `check_frozen.py` - protects finished paths.
+- `check_frozen.py` - protects finished paths; range mode for audits, staged mode for hooks.
 - `check_scope.py` - optional task-level path boundaries.
 - `check_git_policy.py` - finds meaningful unmerged Git work.
 - `check_guardrail_integrity.py` - protects the guardrails themselves.
